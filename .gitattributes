@@ -1,0 +1,8 @@
+# Line endings are normalised to LF in the repository; the working copy follows the platform.
+* text=auto
+
+# Reference outputs and fixtures are compared byte for byte by the CLI surface and reference
+# tests, so their working copy must be LF too. Without this, core.autocrlf hands those tests
+# CRLF on a Windows checkout and they fail for a reason that has nothing to do with the code.
+tests/reference/** text eol=lf
+tests/data/** text eol=lf
