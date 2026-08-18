@@ -1,0 +1,12 @@
+.claude/
+AGENTS.md
+CLAUDE.md
+.venv/
+__pycache__/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+.env
