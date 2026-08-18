@@ -1,0 +1,58 @@
+# Hooks call the tools from the project's own environment (`language: system`) rather than the
+# canonical remote repositories with a pinned `rev`. Two reasons:
+#
+#   1. Versions then live in requirements.txt alone. A `rev` per repository would be a second
+#      place to keep in sync, and drift between them is silent.
+#   2. mypy needs the project's real dependencies. A hook installed into pre-commit's own
+#      isolated environment would, from P2 onwards, fail on the numpy import unless the same
+#      versions were repeated a third time under `additional_dependencies`.
+#
+# The trade-off: these hooks need the project's virtualenv active. That failure is loud
+# ("executable not found"), not silent, which is what makes it acceptable.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        stages: [pre-commit]
+
+      - id: ruff-format
+        name: ruff format
+        # `--check` instead of reformatting in place: this is the identical gate CI runs, so a
+        # commit that passes here cannot fail on the server for a formatting reason. A hook
+        # that silently rewrites the file would also hide what it changed.
+        entry: ruff format --check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        stages: [pre-commit]
+
+      - id: mypy
+        name: mypy
+        # Runs over the whole project, not over the staged files: strict typing is a property
+        # of the import graph, and checking only what was touched reports green while a caller
+        # two modules away no longer type-checks.
+        #
+        # `files` is what keeps that decision safe. With `pass_filenames: false` the hook would
+        # otherwise fire on a commit containing no Python at all, invoking mypy with no
+        # arguments, which exits 2 and blocks a commit for a reason unrelated to the change.
+        entry: mypy .
+        language: system
+        pass_filenames: false
+        files: \.py$
+        stages: [pre-commit]
+
+      - id: pytest
+        name: pytest
+        # Push stage only. The suite is the gate for what leaves the machine; commits stay
+        # cheap so that steps can stay small.
+        entry: pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
