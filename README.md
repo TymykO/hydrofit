@@ -27,7 +27,7 @@ Documented once the command set exists.
 
 ## Architecture
 
-Documented once there is more than an empty package to describe.
+Documented once the full path — import, fit, plot, export — exists to describe.
 
 ## Development
 

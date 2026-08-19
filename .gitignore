@@ -10,6 +10,7 @@ htmlcov/
 .pytest_cache/
 dist/
 .env
+.idea/
 
 # Written per step for the owner to read and run; never part of the history.
 commit-plan.ps1

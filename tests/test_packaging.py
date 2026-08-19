@@ -1,7 +1,7 @@
 """Packaging tests: the distribution installs and the package imports.
 
 These guard the three names of the project (distribution, import package, command)
-at the two points that already exist in P1.3. The command is added in P3.3.
+at the two points that already exist. The command joins them once the CLI does.
 """
 
 import importlib

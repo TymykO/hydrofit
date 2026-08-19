@@ -4,8 +4,8 @@
 #   1. Versions then live in requirements.txt alone. A `rev` per repository would be a second
 #      place to keep in sync, and drift between them is silent.
 #   2. mypy needs the project's real dependencies. A hook installed into pre-commit's own
-#      isolated environment would, from P2 onwards, fail on the numpy import unless the same
-#      versions were repeated a third time under `additional_dependencies`.
+#      isolated environment would, once the package imports numpy, fail on that import unless
+#      the same versions were repeated a third time under `additional_dependencies`.
 #
 # The trade-off: these hooks need the project's virtualenv active. That failure is loud
 # ("executable not found"), not silent, which is what makes it acceptable.
