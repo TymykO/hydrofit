@@ -1,0 +1,4 @@
+slug                          product          kind       points  x range         y range
+stad-10-52-851-010            STAD 10          generated  3       0.054 .. 0.533  0.5 .. 1.5
+ta-bvs-243-dn65-6-52-240-065  TA-BVS 243 DN65  raw        2       2.52 .. 61.2    1 .. 9
+2 series
