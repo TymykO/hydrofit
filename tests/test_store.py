@@ -461,3 +461,76 @@ def test_points_row_that_is_not_numeric_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(HydrofitError, match="line 3 is not a pair of numbers"):
         store.load(series.slug)
+
+
+def filled_store(root: Path) -> SeriesStore:
+    """Build a store holding three series across two products and both kinds.
+
+    Args:
+        root: Directory for the store.
+
+    Returns:
+        The populated store.
+    """
+    store = SeriesStore(root)
+    store.save(make_series(product="STAD DN10", article_no="52 151-010"))
+    store.save(
+        make_series(
+            product="STAD DN15", article_no="52 151-015", kind=DataKind.GENERATED
+        )
+    )
+    store.save(make_series(product="TA-BVS DN15", article_no="52 191-015"))
+    return store
+
+
+def test_product_filter_matches_part_of_the_name(tmp_path: Path) -> None:
+    """A product filter selects every series whose name contains it.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    matched = filled_store(tmp_path).list_series(product="STAD")
+
+    assert [series.product for series in matched] == ["STAD DN10", "STAD DN15"]
+
+
+def test_product_filter_ignores_case(tmp_path: Path) -> None:
+    """The filter is spelled the way the user types it, not the way the catalogue does.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    matched = filled_store(tmp_path).list_series(product="stad")
+
+    assert [series.product for series in matched] == ["STAD DN10", "STAD DN15"]
+
+
+def test_kind_filter_selects_one_kind(tmp_path: Path) -> None:
+    """A kind filter keeps only series of that kind.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    matched = filled_store(tmp_path).list_series(kind=DataKind.GENERATED)
+
+    assert [series.product for series in matched] == ["STAD DN15"]
+
+
+def test_filters_combine(tmp_path: Path) -> None:
+    """Both filters apply at once.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    matched = filled_store(tmp_path).list_series(product="DN15", kind=DataKind.RAW)
+
+    assert [series.product for series in matched] == ["TA-BVS DN15"]
+
+
+def test_a_filter_that_matches_nothing_returns_an_empty_list(tmp_path: Path) -> None:
+    """No match is an answer, not an error.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    assert filled_store(tmp_path).list_series(product="no such valve") == []

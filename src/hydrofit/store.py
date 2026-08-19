@@ -248,16 +248,32 @@ class SeriesStore:
                 )
         return series
 
-    def list_series(self) -> list[Series]:
-        """Read every series in the store.
+    def list_series(
+        self, product: str | None = None, kind: DataKind | None = None
+    ) -> list[Series]:
+        """Read the series in the store, narrowed by the filters given.
+
+        Args:
+            product: Case-insensitive substring of the product name. A substring rather than an
+                exact match because products are named "STAD DN10", "STAD DN15" and so on, and
+                a filter of "STAD" that returned nothing would be the opposite of useful.
+            kind: Keep only raw series, or only generated ones.
 
         Returns:
-            All stored series, ordered by slug.
+            The matching series, ordered by slug. No match is an empty list, not an error —
+            "nothing here matches" is an answer.
 
         Raises:
             HydrofitError: If any entry cannot be read.
         """
-        return [self.load(slug) for slug in sorted(self._read_catalog())]
+        needle = None if product is None else product.lower()
+        stored = (self.load(slug) for slug in sorted(self._read_catalog()))
+        return [
+            series
+            for series in stored
+            if (needle is None or needle in series.product.lower())
+            and (kind is None or series.kind is kind)
+        ]
 
     def _read_catalog(self) -> dict[str, object]:
         """Read the catalogue, treating an absent file as an empty store.
