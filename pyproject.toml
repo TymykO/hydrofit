@@ -16,6 +16,9 @@ dependencies = [
     "openpyxl",
 ]
 
+[project.scripts]
+hydrofit = "hydrofit.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/hydrofit"]
 
