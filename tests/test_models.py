@@ -12,8 +12,8 @@ import pytest
 from hydrofit.errors import HydrofitError
 from hydrofit.models import AxisSpec, DataKind, Series, SourceRef
 
-KV = AxisSpec("kv", "m3/h")
-OPENING = AxisSpec("n", "%")
+KV = AxisSpec("Kv", "m³/h")
+OPENING = AxisSpec("n", "-")
 SOURCE = SourceRef("BV - IMI.xlsx", "STAD DN15 | 52 151-015", "2026-08-19T10:00:00")
 
 
@@ -167,7 +167,26 @@ def test_slug_without_usable_characters_is_an_error() -> None:
 
 def test_axis_label_is_the_source_form() -> None:
     """An axis renders back into the label the spreadsheet carried."""
-    assert KV.label == "kv [m3/h]"
+    assert KV.label == "Kv [m³/h]"
+
+
+def test_a_dimensionless_axis_renders_a_dash_in_brackets() -> None:
+    """A quantity with no dimension carries `-`, and the brackets still come from the model.
+
+    The valve setting is a number read off a dial whose scale the manufacturer chose; `%` would
+    claim it is a share of something, and an empty unit would leave the label indistinguishable
+    from the bare name.
+    """
+    assert OPENING.unit == "-"
+    assert OPENING.label == "n [-]"
+
+
+def test_brackets_come_from_the_model_not_the_caller() -> None:
+    """A unit is stored without brackets and displayed with them, in every case."""
+    for name, unit in (("Kv", "m³/h"), ("n", "-"), ("dp", "kPa")):
+        axis = AxisSpec(name, unit)
+        assert axis.unit == unit
+        assert axis.label == f"{name} [{unit}]"
 
 
 def test_axis_without_a_unit_is_an_error() -> None:
@@ -179,7 +198,7 @@ def test_axis_without_a_unit_is_an_error() -> None:
 def test_axis_without_a_name_is_an_error() -> None:
     """An axis with no name is rejected."""
     with pytest.raises(HydrofitError, match="needs a name"):
-        AxisSpec("", "m3/h")
+        AxisSpec("", "m³/h")
 
 
 def test_data_kind_carries_its_stored_spelling() -> None:

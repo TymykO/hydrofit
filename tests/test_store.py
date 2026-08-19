@@ -16,8 +16,8 @@ from hydrofit.errors import HydrofitError
 from hydrofit.models import AxisSpec, DataKind, Series, SourceRef
 from hydrofit.store import SeriesStore
 
-KV = AxisSpec("kv", "m3/h")
-OPENING = AxisSpec("n", "%")
+KV = AxisSpec("Kv", "m³/h")
+OPENING = AxisSpec("n", "-")
 SOURCE = SourceRef("BV - IMI.xlsx", "STAD DN15 | 52 151-015", "2026-08-19T10:00:00")
 
 
@@ -86,6 +86,30 @@ def test_round_trip_is_lossless_for_a_701_point_series(tmp_path: Path) -> None:
     assert len(loaded.x) == 701
     assert [repr(value) for value in loaded.x] == [repr(value) for value in series.x]
     assert [repr(value) for value in loaded.y] == [repr(value) for value in series.y]
+
+
+def test_a_superscript_unit_survives_the_round_trip(tmp_path: Path) -> None:
+    """The unit the catalogue really carries, `m³/h`, comes back as itself.
+
+    The superscript is the character where the pair "UTF-8 on write ↔ Windows console
+    codepage" breaks, so it is worth a test of its own rather than a fixture that happens to
+    contain it. The catalogue is read back as bytes as well: `ensure_ascii=False` means the
+    character is stored literally, and an escape sequence would be a silent format change.
+
+    Args:
+        tmp_path: Directory for this test's store.
+    """
+    store = SeriesStore(tmp_path)
+    series = make_series()
+
+    store.save(series)
+    loaded = store.load(series.slug)
+
+    assert loaded.x_axis.unit == "m³/h"
+    assert loaded.x_axis.label == "Kv [m³/h]"
+    assert loaded.y_axis.label == "n [-]"
+    assert "m³/h".encode() in store.catalog_path.read_bytes()
+    assert [repr(value) for value in loaded.x] == [repr(value) for value in series.x]
 
 
 def test_one_ulp_neighbours_stay_distinct(tmp_path: Path) -> None:
@@ -163,8 +187,8 @@ def test_catalogue_text_is_sorted_and_indented(tmp_path: Path) -> None:
       "sheet": "STAD DN15 | 52 151-015"
     },
     "x_axis": {
-      "name": "kv",
-      "unit": "m3/h"
+      "name": "Kv",
+      "unit": "m³/h"
     },
     "x_range": [
       1.0,
@@ -172,7 +196,7 @@ def test_catalogue_text_is_sorted_and_indented(tmp_path: Path) -> None:
     ],
     "y_axis": {
       "name": "n",
-      "unit": "%"
+      "unit": "-"
     },
     "y_range": [
       10.0,
