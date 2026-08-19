@@ -1,0 +1,313 @@
+"""Command line surface: import a workbook, list what is stored, show one series.
+
+Thin by design — parse arguments, call a module, print. No domain logic lives here.
+
+Two things happen at this edge and nowhere else. The clock is read here, so that everything
+below stays deterministic and a stored catalogue is byte-identical between runs. And
+`HydrofitError` is turned into a message plus exit code 1 here, so that a problem the user can
+fix never reaches them as a traceback.
+"""
+
+import argparse
+import sys
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TextIO
+
+from hydrofit.errors import HydrofitError
+from hydrofit.importer import import_workbook
+from hydrofit.models import DataKind, Series
+from hydrofit.store import SeriesStore
+
+# Said in full because the alternative reads as a bug: `--product DN10` will one day also return
+# `DN100`, and a user who was never told about substring matching will file that as one.
+_PRODUCT_HELP = "matches any part of the product name, case-insensitive"
+
+# Spelled out because the layout is the one thing a user must get right, and because nothing in
+# hydrofit knows what a valve or a vessel is — a reader who assumes otherwise will look for a
+# product setting that does not exist.
+_IMPORT_DESCRIPTION = """\
+hydrofit knows no products. One sheet becomes one series, read like this:
+
+  sheet name   <product> | <article no.>   the identity, and the slug
+  cell A1      labels column A, the y axis: the computed quantity
+  cell B1      labels column B, the x axis: the free variable
+  labels       name [unit], taken exactly as written, unit never empty
+
+Which quantities those are is entirely up to the sheet. A balancing valve
+carries n [-] over Kv [m³/h]: the setting is turned, kv follows from it.
+A pressurisation vessel carries Δp [kPa] over q [m³/h]: the flow is turned,
+the pressure drop follows. hydrofit reads both the same way, and invents
+nothing about either.
+"""
+
+_DEFAULT_STORE = "store"
+
+# Plain ASCII on purpose. The only characters in hydrofit's output that a legacy console cannot
+# render should be the ones the data itself carries, such as the unit m³/h — decoration has no
+# business adding to that list.
+_RANGE_SEPARATOR = " .. "
+
+
+def _emit(lines: Sequence[str], out: TextIO) -> None:
+    """Write a whole block of output in one call.
+
+    Building the block first is not a style preference. Encoding happens before the first byte
+    reaches the stream, so a console that cannot render a unit fails with nothing written rather
+    than with half a report on screen and an error underneath it.
+
+    Args:
+        lines: The lines to write, without terminators.
+        out: Stream to write to.
+    """
+    print("\n".join(lines), file=out)
+
+
+def _fmt_range(bounds: tuple[float, float]) -> str:
+    """Render a low/high pair for a table.
+
+    Args:
+        bounds: The low and high value.
+
+    Returns:
+        The pair as text.
+    """
+    return f"{bounds[0]:g}{_RANGE_SEPARATOR}{bounds[1]:g}"
+
+
+def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    """Lay out rows in columns wide enough for their contents.
+
+    Args:
+        headers: Column headings.
+        rows: Cell text, one sequence per row.
+
+    Returns:
+        The rendered lines, heading first. Trailing padding is stripped so that no line carries
+        invisible differences into a reference file.
+    """
+    widths = [
+        max(len(str(cell)) for cell in column)
+        for column in zip(headers, *rows, strict=True)
+    ]
+    return [
+        "  ".join(
+            cell.ljust(width) for cell, width in zip(line, widths, strict=True)
+        ).rstrip()
+        for line in (headers, *rows)
+    ]
+
+
+def _run_import(args: argparse.Namespace, out: TextIO) -> int:
+    """Read a workbook into the store.
+
+    A sheet that cannot describe a series is reported as a warning and the rest of the workbook
+    still lands — the contract puts sheet-level problems against the sheet. The operation only
+    fails when nothing at all could be imported, because that is the case where the user asked
+    for something and received nothing.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to write the report to.
+
+    Returns:
+        Process exit code.
+
+    Raises:
+        HydrofitError: If the file itself cannot be read.
+    """
+    result = import_workbook(
+        args.path,
+        imported_at=datetime.now(tz=UTC).isoformat(timespec="seconds"),
+        kind=args.kind,
+        sheet=args.sheet,
+    )
+
+    for problem in result.problems:
+        print(f"warning: {problem.sheet}: {problem.message}", file=sys.stderr)
+
+    store = SeriesStore(Path(args.store))
+    for series in result.series:
+        store.save(series)
+
+    skipped = f", skipped {len(result.problems)} sheet(s)" if result.problems else ""
+    _emit(
+        [
+            f"imported {len(result.series)} series from {Path(args.path).name}{skipped}",
+            *(
+                f"  {series.slug}  {series.kind}  {len(series.x)} points"
+                for series in result.series
+            ),
+        ],
+        out,
+    )
+    return 1 if not result.series else 0
+
+
+def _run_list(args: argparse.Namespace, out: TextIO) -> int:
+    """Print the stored series, narrowed by the filters given.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to print the table to.
+
+    Returns:
+        Process exit code. An empty result is an answer, not a failure.
+
+    Raises:
+        HydrofitError: If an entry in the store cannot be read.
+    """
+    found = SeriesStore(Path(args.store)).list_series(
+        product=args.product, kind=args.kind
+    )
+    if not found:
+        _emit(["no series match"], out)
+        return 0
+
+    rows = [
+        [
+            series.slug,
+            series.product,
+            str(series.kind),
+            str(len(series.x)),
+            _fmt_range(series.x_range()),
+            _fmt_range(series.y_range()),
+        ]
+        for series in found
+    ]
+    table = _table(("slug", "product", "kind", "points", "x range", "y range"), rows)
+    _emit([*table, f"{len(found)} series"], out)
+    return 0
+
+
+def _run_show(args: argparse.Namespace, out: TextIO) -> int:
+    """Print one series in full, optionally with its points.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to print to.
+
+    Returns:
+        Process exit code.
+
+    Raises:
+        HydrofitError: If the slug is unknown or the entry cannot be read.
+    """
+    series: Series = SeriesStore(Path(args.store)).load(args.slug)
+    # Axes are printed through `label`, never through `unit`: the brackets belong to the model,
+    # and a path that assembles them here is a path that can one day forget to.
+    fields = (
+        ("slug", series.slug),
+        ("product", series.product),
+        ("article no.", series.article_no),
+        ("kind", str(series.kind)),
+        ("points", str(len(series.x))),
+        ("x axis", series.x_axis.label),
+        ("y axis", series.y_axis.label),
+        ("x range", _fmt_range(series.x_range())),
+        ("y range", _fmt_range(series.y_range())),
+        ("source file", series.source.file),
+        ("source sheet", series.source.sheet),
+        ("imported at", series.source.imported_at),
+    )
+    width = max(len(name) for name, _ in fields)
+    lines = [f"{name.ljust(width)}  {value}" for name, value in fields]
+    if args.points:
+        lines.append("")
+        lines.extend(f"  {x!r},{y!r}" for x, y in zip(series.x, series.y, strict=True))
+    _emit(lines, out)
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Build the argument parser.
+
+    Returns:
+        The parser for every subcommand.
+    """
+    parser = argparse.ArgumentParser(
+        prog="hydrofit",
+        description="Fit polynomials to instrument curves.",
+    )
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    def with_store(sub: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        """Add the store option shared by every subcommand.
+
+        Args:
+            sub: The subparser to extend.
+
+        Returns:
+            The same subparser.
+        """
+        sub.add_argument(
+            "--store",
+            default=_DEFAULT_STORE,
+            metavar="DIR",
+            help=f"directory holding the series (default: {_DEFAULT_STORE})",
+        )
+        return sub
+
+    importer = with_store(
+        subcommands.add_parser(
+            "import",
+            help="read a spreadsheet",
+            description=_IMPORT_DESCRIPTION,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+    )
+    importer.add_argument("path", help="path to the .xlsx file")
+    importer.add_argument(
+        "--sheet", metavar="NAME", help="import only this sheet, by its name"
+    )
+    importer.add_argument(
+        "--kind",
+        type=DataKind,
+        choices=list(DataKind),
+        help="force the kind instead of classifying each sheet by its shape",
+    )
+
+    listing = with_store(subcommands.add_parser("list", help="list stored series"))
+    listing.add_argument(
+        "--product", metavar="TEXT", help=f"filter by product: {_PRODUCT_HELP}"
+    )
+    listing.add_argument("--kind", type=DataKind, choices=list(DataKind))
+
+    show = with_store(subcommands.add_parser("show", help="show one series"))
+    show.add_argument("slug", help="identifier from the list output")
+    show.add_argument("--points", action="store_true", help="print the points too")
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run hydrofit.
+
+    Args:
+        argv: Arguments without the program name. `None` reads them from the command line.
+
+    Returns:
+        Process exit code: 0 on success, 1 for a problem the user can fix.
+    """
+    runners = {"import": _run_import, "list": _run_list, "show": _run_show}
+    try:
+        # Parsing is inside the guard because `--help` prints from within it. The import help
+        # spells the axis labels the way real sheets carry them, superscript and all, so the
+        # help screen is one more thing a legacy console can fail to render — and the screen a
+        # stuck user reaches for first is the worst possible place for a traceback.
+        args = _parser().parse_args(argv)
+        return runners[args.command](args, sys.stdout)
+    except HydrofitError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except UnicodeEncodeError as error:
+        # The catalogue carries units like m³/h, which a legacy console codepage cannot render.
+        # That is an environment problem, not a data problem, and it is worth saying so plainly
+        # rather than letting an encoder traceback stand in for the explanation.
+        print(
+            f"error: this console cannot print {error.object[error.start : error.end]!r} "
+            f"({error.encoding}); set PYTHONIOENCODING=utf-8 and run again",
+            file=sys.stderr,
+        )
+        return 1

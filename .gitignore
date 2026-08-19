@@ -12,5 +12,16 @@ dist/
 .env
 .idea/
 
+# Source spreadsheets are working input, not a deliverable: this repository carries numeric
+# tables with their source noted, never a copy of the material they came from.
+/data/
+
+# Written by the first real import; runtime output, not source.
+/store/
+
+# Both patterns above carry a leading slash on purpose. Unanchored, each would match a
+# directory of that name at any depth, so a fixture tree under tests/ would disappear from the
+# repository without anyone being told — the worst way for a fixture to go missing.
+
 # Written per step for the owner to read and run; never part of the history.
 commit-plan.ps1

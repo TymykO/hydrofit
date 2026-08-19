@@ -1,0 +1,12 @@
+slug          stad-10-52-851-010
+product       STAD 10
+article no.   52 851-010
+kind          generated
+points        3
+x axis        Kv [m³/h]
+y axis        n [-]
+x range       0.054 .. 0.533
+y range       0.5 .. 1.5
+source file   BV - IMI.xlsx
+source sheet  STAD 10 | 52 851-010
+imported at   2026-08-19T10:00:00+00:00

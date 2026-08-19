@@ -51,8 +51,9 @@ class AxisSpec:
     """One axis of a series: the quantity and the unit it is measured in.
 
     Attributes:
-        name: Quantity name as it appears in the source label, for example ``kv``.
-        unit: Unit as it appears in the source label, for example ``m3/h``.
+        name: Quantity name as it appears in the source label, for example ``Kv``.
+        unit: Unit as it appears in the source label, for example ``m³/h``. A
+            dimensionless quantity carries ``-``.
     """
 
     name: str
@@ -71,7 +72,7 @@ class AxisSpec:
 
     @property
     def label(self) -> str:
-        """The axis label in source form, for example ``kv [m3/h]``."""
+        """The axis label in source form, for example ``Kv [m³/h]``."""
         return f"{self.name} [{self.unit}]"
 
 

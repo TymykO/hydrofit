@@ -16,6 +16,9 @@ dependencies = [
     "openpyxl",
 ]
 
+[project.scripts]
+hydrofit = "hydrofit.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/hydrofit"]
 
@@ -32,6 +35,14 @@ convention = "google"
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+# openpyxl ships neither a py.typed marker nor stubs, so strict mode cannot see its API. The
+# exemption is scoped to that one package instead of relaxing the setting globally, and the
+# importer converts every value it reads into hydrofit's own types at the boundary — nothing
+# untyped travels further than the cell it came from.
+[[tool.mypy.overrides]]
+module = ["openpyxl.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
