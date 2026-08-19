@@ -15,6 +15,8 @@ from openpyxl import Workbook
 from hydrofit.errors import HydrofitError
 from hydrofit.importer import (
     ImportResult,
+    classify_kind,
+    has_uniform_step,
     import_workbook,
     parse_label,
     parse_number,
@@ -65,7 +67,9 @@ def one_sheet(path: Path, rows: list[tuple[object, ...]], name: str = SHEET) -> 
 
 
 def imported(path: Path, **kwargs: object) -> ImportResult:
-    """Import a workbook with the fixed timestamp and kind these tests share.
+    """Import a workbook with the fixed timestamp these tests share.
+
+    No kind is forced, so every call here also exercises the classification.
 
     Args:
         path: Workbook to read.
@@ -76,7 +80,52 @@ def imported(path: Path, **kwargs: object) -> ImportResult:
     """
     sheet = kwargs.get("sheet")
     assert sheet is None or isinstance(sheet, str)
-    return import_workbook(path, imported_at=STAMP, kind=DataKind.RAW, sheet=sheet)
+    return import_workbook(path, imported_at=STAMP, sheet=sheet)
+
+
+def grid(count: int, step: float = 0.005, start: float = 0.5) -> list[float]:
+    """Build settings on an even grid, the way a generated sheet lists them.
+
+    Args:
+        count: How many settings to produce.
+        step: Distance between neighbours.
+        start: First setting.
+
+    Returns:
+        The settings, ascending.
+    """
+    return [start + index * step for index in range(count)]
+
+
+def curve_rows(settings: list[float]) -> list[tuple[object, ...]]:
+    """Pair settings with kv values that are never evenly spaced.
+
+    The squaring matters: a generated catalogue computes kv from the setting, so kv lands
+    wherever the curve puts it. A fixture with evenly spaced kv would let a classifier that
+    reads the wrong column pass.
+
+    Args:
+        settings: Setting values for column A.
+
+    Returns:
+        Rows ready for a sheet, header excluded.
+    """
+    return [(value, round(value**2 + 0.05, 10)) for value in settings]
+
+
+def inverse_curve_rows(flows: list[float]) -> list[tuple[object, ...]]:
+    """Pair an even grid on **x** with a y computed from it.
+
+    The mirror image of `curve_rows`, and the shape the next instrument family will arrive in:
+    there the free variable is the one that gets turned, so the even column is x.
+
+    Args:
+        flows: x values on an even grid.
+
+    Returns:
+        Rows ready for a sheet, header excluded.
+    """
+    return [(round(value**2 + 0.05, 10), value) for value in flows]
 
 
 def test_sheet_name_splits_into_product_and_article() -> None:
@@ -297,6 +346,106 @@ def test_asking_for_a_sheet_that_is_not_there_stops_the_import(tmp_path: Path) -
 
     with pytest.raises(HydrofitError, match="no sheet named"):
         imported(path, sheet="STAD 99 | nope")
+
+
+def test_a_dense_even_grid_reads_as_generated(tmp_path: Path) -> None:
+    """701 settings stepped by 0.005 is the shape of a curve someone generated."""
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(grid(701))])
+    (series,) = imported(path).series
+
+    assert series.kind is DataKind.GENERATED
+
+
+def test_a_short_table_reads_as_raw(tmp_path: Path) -> None:
+    """17 points is a catalogue table, however evenly its settings are spaced."""
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(grid(17, step=0.5))])
+    (series,) = imported(path).series
+
+    assert series.kind is DataKind.RAW
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"), [(99, DataKind.RAW), (100, DataKind.GENERATED)]
+)
+def test_the_density_threshold_sits_between_99_and_100(
+    tmp_path: Path, count: int, expected: DataKind
+) -> None:
+    """The boundary is pinned, so a change to it cannot pass unnoticed.
+
+    Args:
+        tmp_path: Directory for this test's workbook.
+        count: How many points the sheet carries.
+        expected: The kind that count should produce.
+    """
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(grid(count))])
+    (series,) = imported(path).series
+
+    assert series.kind is expected
+
+
+def test_a_dense_but_irregular_series_reads_as_raw(tmp_path: Path) -> None:
+    """Density alone is not the test: one broken step makes the grid a table."""
+    settings = grid(200)
+    settings[120] += 0.002
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(settings)])
+    (series,) = imported(path).series
+
+    assert series.kind is DataKind.RAW
+
+
+def test_uneven_kv_does_not_make_a_generated_series_raw(tmp_path: Path) -> None:
+    """The uniformity is measured on the setting axis; kv is never evenly spaced.
+
+    This is the assertion that would fail if the classifier ever read column B again — which
+    is what the earlier wording of the rule asked for, and what the real catalogue disproves.
+    """
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(grid(701))])
+    (series,) = imported(path).series
+
+    assert not has_uniform_step(series.x)
+    assert series.kind is DataKind.GENERATED
+
+
+def test_settings_listed_downwards_are_still_a_grid() -> None:
+    """TA-BVS lists the top setting first; a descending grid is a grid."""
+    settings = list(reversed(grid(200)))
+    kv = [round(value**2 + 0.05, 10) for value in settings]
+
+    assert has_uniform_step([9.0, 8.5, 8.0, 7.5])
+    assert classify_kind(kv, settings) is DataKind.GENERATED
+
+
+def test_an_even_grid_on_x_reads_as_generated(tmp_path: Path) -> None:
+    """Evenness is not tied to an axis: a set stepped on x is generated too.
+
+    This is the case the valve catalogue cannot show, and the one the next instrument family
+    will arrive as — there the free variable is what gets turned. A rule pinned to the setting
+    axis would read that family backwards, which is why the predicate takes either side.
+    """
+    path = one_sheet(
+        tmp_path / "dp.xlsx", [LABELS, *inverse_curve_rows(grid(200, step=0.25))]
+    )
+    (series,) = imported(path).series
+
+    assert has_uniform_step(series.x)
+    assert not has_uniform_step(series.y)
+    assert series.kind is DataKind.GENERATED
+
+
+@pytest.mark.parametrize("forced", [DataKind.RAW, DataKind.GENERATED])
+def test_an_explicit_kind_outranks_the_heuristic(
+    tmp_path: Path, forced: DataKind
+) -> None:
+    """The person who knows the data wins over a rule of thumb about it — both ways.
+
+    Args:
+        tmp_path: Directory for this test's workbook.
+        forced: The kind the caller demands.
+    """
+    path = one_sheet(tmp_path / "bv.xlsx", [LABELS, *curve_rows(grid(701))])
+    (series,) = import_workbook(path, imported_at=STAMP, kind=forced).series
+
+    assert series.kind is forced
 
 
 def test_a_missing_file_stops_the_import(tmp_path: Path) -> None:
