@@ -19,7 +19,12 @@ dist/
 # Written by the first real import; runtime output, not source.
 /store/
 
-# Both patterns above carry a leading slash on purpose. Unanchored, each would match a
+# Written by hatchling when the distribution is built. The entry comes before the directory
+# can exist: the IDE stages new files by itself, so a build tree would arrive already in the
+# index — the same trap /data/ was written for.
+/build/
+
+# /data/, /store/ and /build/ carry a leading slash on purpose. Unanchored, each would match a
 # directory of that name at any depth, so a fixture tree under tests/ would disappear from the
 # repository without anyone being told — the worst way for a fixture to go missing.
 
