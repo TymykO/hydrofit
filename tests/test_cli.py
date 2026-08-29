@@ -392,8 +392,10 @@ def test_fit_says_nothing_about_conditioning_when_the_rank_is_full(
 def crowded_store(root: Path) -> Path:
     """Write a store whose only series cannot carry a degree-6 fit.
 
-    Seven points spanning 6e-7: ordinary floats, but the Vandermonde matrix over so narrow an
-    interval is degenerate and numpy answers with a rank below the number of coefficients.
+    Seven points spanning 6e-7: ordinary floats, and the Vandermonde matrix over that interval
+    is not singular either — its determinant is around 2.5e-140 — but it is indistinguishable
+    from singular at the precision a solver works to, and numpy answers with a rank below the
+    number of coefficients.
 
     Args:
         root: Directory to build the store in.
