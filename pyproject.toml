@@ -46,6 +46,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A rank-deficient fit must reach the caller as a number, never as a warning nobody reads.
+# Promoted to an error so that any RankWarning raised anywhere in the suite stops it, rather
+# than scrolling past. Observed red on a throwaway probe that raised one on purpose.
+filterwarnings = ["error::numpy.exceptions.RankWarning"]
 
 [tool.coverage.run]
 source = ["src/hydrofit"]
