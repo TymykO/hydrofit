@@ -40,11 +40,17 @@ class PolynomialFit:
         coefficients: Powers in descending order, ``x^n`` down to ``x^0``. This is the order
             the spreadsheet formulas consuming them expect; reversing it would pass every
             test of the fit itself and fail against the legacy numbers.
-        rank: Rank numpy's least-squares solution reported. Data that supports the degree
-            asked of it gives ``degree + 1``; anything lower is numpy's own criterion for
-            warning about conditioning. The number is passed on as it came — there is no
-            threshold here, because a threshold would be our opinion about someone else's
-            data, and the curves this package must reproduce were fitted without one.
+        rank: Rank numpy's least-squares solution reported — a *numerical* rank, decided by
+            the solver's cutoff on singular values, not an algebraic one. Points that are
+            distinct determine every coefficient of the requested degree in exact arithmetic;
+            what a narrow interval takes away is the precision to resolve them, and that is
+            what a rank below ``degree + 1`` records. It is also narrower than conditioning in
+            general: a fit can be badly conditioned and still come back at full rank, and this
+            number says nothing about that case. numpy raises a warning on the same condition
+            when asked for the short form of a fit; this package asks for the full result and
+            receives the number instead. The number is passed on as it came — there is no
+            threshold of ours here, because a threshold would be our opinion about someone
+            else's data, and the curves this package must reproduce were fitted without one.
     """
 
     degree: int

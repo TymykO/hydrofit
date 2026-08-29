@@ -11,8 +11,10 @@ exports coefficient tables in the column layouts that downstream spreadsheets ex
 **Status:** early development. Series can be imported from catalogue spreadsheets, listed,
 inspected, fitted and evaluated; the coefficients reproduce the ones a legacy tool published
 for the same curves. Measured across all fourteen catalogue curves, the largest relative
-difference is 3.1e-12; what the test suite holds is a tenth of that as an early warning, and a
-hundred-fold margin as the promise. Plotting and export are not implemented yet.
+difference is 3.1e-12 — a measurement, and the only number here that no test holds. The two
+that are held sit above it: 1e-10, some thirty times higher, so that a slow drift fails a test
+long before it approaches the promise, and 1e-9, some three hundred times higher, which is the
+promise. Plotting and export are not implemented yet.
 
 ## Requirements
 
@@ -127,16 +129,21 @@ The coefficients run in descending powers, the order a spreadsheet formula reads
 `--degree N` fits another degree (default: 6), and `--residuals` appends the difference between
 the curve and every point.
 
-A fit the data cannot carry says so, on a line that appears only then:
+A fit the data cannot resolve at the degree asked for says so, on a line that appears only
+then — when the solver reports a rank below the number of coefficients that degree needs:
 
 ```
 conditioning  rank 3 of the 7 coefficients a degree-6 fit needs: the data does not support it
 ```
 
-The numbers above such a line are still printed, because they are what the request produced —
-but a rank below `degree + 1` means the points do not determine that many coefficients, and the
-values will look like the ±2e10 they are. A series shorter than `degree + 1` points is refused
-outright.
+The numbers above such a line are still printed, because they are what the request produced.
+A rank below `degree + 1` does not mean the points fail to determine that many coefficients —
+distinct points always do, in exact arithmetic — but that they do not determine them to a
+precision the solver can resolve over so narrow an interval. What comes back is one of the
+answers that fit, chosen by the solver, and it is at least six orders of magnitude larger than
+the curve it claims to describe: that much is asserted by a test, while the digits themselves
+are not, since another machine may choose a different answer. A series shorter than
+`degree + 1` points is refused outright.
 
 ### Evaluate
 

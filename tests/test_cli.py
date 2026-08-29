@@ -392,8 +392,10 @@ def test_fit_says_nothing_about_conditioning_when_the_rank_is_full(
 def crowded_store(root: Path) -> Path:
     """Write a store whose only series cannot carry a degree-6 fit.
 
-    Seven points spanning 6e-7: ordinary floats, but the Vandermonde matrix over so narrow an
-    interval is degenerate and numpy answers with a rank below the number of coefficients.
+    Seven points spanning 6e-7: ordinary floats, and the Vandermonde matrix over that interval
+    is not singular either — its determinant is around 2.5e-140 — but it is indistinguishable
+    from singular at the precision a solver works to, and numpy answers with a rank below the
+    number of coefficients.
 
     Args:
         root: Directory to build the store in.
@@ -574,8 +576,12 @@ def test_the_conditioning_line_travels_alone(
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
         assert main(["fit", "tight-10-000", "--store", str(store)]) == 0
+    captured = capsys.readouterr()
+    # The half this test is named for. Without it the silence below would also be reported by a
+    # run that had stopped saying anything at all.
+    assert "conditioning" in captured.out
     assert [str(entry.message) for entry in raised] == []
-    assert capsys.readouterr().err == ""
+    assert captured.err == ""
 
 
 def test_eval_refuses_an_unknown_series(
