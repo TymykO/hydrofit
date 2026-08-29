@@ -1,7 +1,6 @@
 """Polynomial fits, and the numbers that say how closely one follows its points."""
 
 import math
-import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -46,15 +45,11 @@ class PolynomialFit:
             warning about conditioning. The number is passed on as it came — there is no
             threshold here, because a threshold would be our opinion about someone else's
             data, and the curves this package must reproduce were fitted without one.
-        numpy_warnings: What numpy said during the fit, if anything, captured rather than
-            silenced. Kept so a caller can repeat it in its own words instead of letting a
-            warning surface as noise, or vanish.
     """
 
     degree: int
     coefficients: tuple[float, ...]
     rank: int
-    numpy_warnings: tuple[str, ...]
 
     @classmethod
     def fit(cls, series: Series, degree: int = DEFAULT_DEGREE) -> "PolynomialFit":
@@ -72,29 +67,29 @@ class PolynomialFit:
             The fitted polynomial.
 
         Raises:
-            HydrofitError: If the series holds fewer than ``degree + 1`` points. The check
-                lives here and not in ``Series``, which cannot know at construction time what
-                degree will later be asked of it.
+            HydrofitError: If the degree is negative, or the series holds fewer than
+                ``degree + 1`` points. The length check lives here and not in ``Series``, which
+                cannot know at construction time what degree will later be asked of it.
         """
+        if degree < 0:
+            raise HydrofitError(f"a polynomial degree cannot be negative: {degree}")
         available = len(series.x)
         if available < degree + 1:
             raise HydrofitError(
                 f"a degree-{degree} fit needs at least {degree + 1} points, "
                 f"and {series.product} has {available}"
             )
-        # full=True is what carries the rank out; measured 2026-08-29, numpy raises its
-        # RankWarning only when full is False, so the two facts cannot be had from one call.
-        # The recorder stays anyway: whatever a future numpy emits is kept, not leaked.
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            coefficients, _residuals, rank, _singular_values, _rcond = np.polyfit(
-                np.asarray(series.x), np.asarray(series.y), degree, full=True
-            )
+        # Measured 2026-08-29: numpy raises its RankWarning only when full is False, and
+        # returns the rank only when it is True — the two cannot be had from one call. The
+        # rank is the more useful half: it is a number a caller can report, where a warning
+        # either reaches a terminal as noise or is filtered into silence.
+        coefficients, _residuals, rank, _singular_values, _rcond = np.polyfit(
+            np.asarray(series.x), np.asarray(series.y), degree, full=True
+        )
         return cls(
             degree=degree,
             coefficients=tuple(float(value) for value in coefficients),
             rank=int(rank),
-            numpy_warnings=tuple(str(entry.message) for entry in caught),
         )
 
     def evaluate(self, x: float) -> float:

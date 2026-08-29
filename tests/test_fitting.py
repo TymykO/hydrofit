@@ -1,8 +1,13 @@
 """Unit tests for the fitting layer.
 
-Every assertion here stands on a polynomial whose coefficients are known by construction, so
-the expected answer comes from arithmetic rather than from a second run of the same code. The
-fits against the legacy numbers live elsewhere; these tests are about the layer itself.
+Most expected values here come from arithmetic rather than from a second run of the same
+code: a polynomial whose coefficients are known by construction, or a case small enough to work
+out by hand. Two exceptions are deliberate and worth naming. `evaluate` is compared against
+`numpy.polyval`, which is what it calls — what that checks is that the stored coefficients are
+the fitted ones and are used as a polynomial, not that polyval is correct. And the
+ill-conditioned case is built from points chosen for the conditioning of their Vandermonde
+matrix, not to lie on any curve. The fits against the legacy numbers live elsewhere; these
+tests are about the layer itself.
 """
 
 import math
@@ -48,7 +53,11 @@ def test_an_exact_polynomial_is_recovered(degree: int) -> None:
     expected = CURVES[degree]
     fit = PolynomialFit.fit(series_from(expected), degree)
     assert fit.degree == degree
-    assert np.allclose(fit.coefficients, expected, rtol=1e-9)
+    # atol=0 on purpose: allclose defaults it to 1e-8, which for coefficients of this size
+    # would decide every comparison and make the stated rtol decorative. Margin measured on the
+    # worst coefficient of each degree: 5.5e-15 at degree 2, 1.8e-12 at 5, 5.7e-12 at 6 — some
+    # 170x inside the tolerance where it is tightest, which is degree 6.
+    assert np.allclose(fit.coefficients, expected, rtol=1e-9, atol=0)
 
 
 @pytest.mark.parametrize("degree", sorted(CURVES))
@@ -56,21 +65,29 @@ def test_an_exact_fit_reports_a_perfect_score(degree: int) -> None:
     """On points with no scatter the metrics have nothing left to report."""
     series = series_from(CURVES[degree])
     metrics = PolynomialFit.fit(series, degree).metrics(series)
-    # Exactly 1.0, not approximately: the residual sum is ~1e-28 against a deviation sum of
-    # order 100, so the subtraction lands on the float itself. Measured at all three degrees.
+    # Exactly 1.0, not approximately. Measured at all three degrees, the ratio of the
+    # residual sum to the deviation sum is ~1e-29 — the residual sums themselves run 1e-27 to
+    # 1.8e-25 against deviation sums of 54 to 8.3e3 — so subtracting it from 1.0 lands on 1.0.
     assert metrics.r_squared == 1.0
-    assert metrics.max_abs_error == pytest.approx(0.0, abs=1e-9)
-    assert metrics.rmse == pytest.approx(0.0, abs=1e-9)
+    # 1e-12, not 1e-9: the worst measured across the three degrees is 1.28e-13, and a bound
+    # three orders above what the code delivers stops being a measurement of anything.
+    assert metrics.max_abs_error == pytest.approx(0.0, abs=1e-12)
+    assert metrics.rmse == pytest.approx(0.0, abs=1e-12)
 
 
 def test_the_default_degree_is_six() -> None:
     """The degree the legacy tool uses for valves is the one taken without asking."""
-    assert DEFAULT_DEGREE == 6
-    assert PolynomialFit.fit(series_from(CURVES[6])).degree == 6
+    assert PolynomialFit.fit(series_from(CURVES[6])).degree == DEFAULT_DEGREE == 6
 
 
 def test_scatter_lowers_every_metric_it_should() -> None:
-    """A displaced point shows up in all three numbers, and in the residual that caused it."""
+    """A displaced point shows up in all three numbers, and in the residual that caused it.
+
+    The residual carries the sign the docstring of `residuals` promises, `fit(x) - y`, and
+    that signed number is what a caller prints. Two other tests now hold the same line — the
+    one worked out by hand and the one about ordering — and a red trial confirms it: flipping
+    the sign fails all three.
+    """
     coefficients = CURVES[2]
     series = series_from(coefficients)
     moved = list(series.y)
@@ -85,10 +102,15 @@ def test_scatter_lowers_every_metric_it_should() -> None:
         kind=series.kind,
         source=series.source,
     )
-    metrics = PolynomialFit.fit(scattered, 2).metrics(scattered)
+    fit = PolynomialFit.fit(scattered, 2)
+    metrics = fit.metrics(scattered)
     assert metrics.r_squared < 1.0
     assert metrics.max_abs_error > 0.1
-    assert metrics.rmse < metrics.max_abs_error
+    # No comparison of rmse against max_abs_error: rms <= max holds for every residual vector,
+    # so it would pass whatever this code computed. The arithmetic of rmse is pinned by the
+    # hand-worked case below.
+    # The point was moved up, so the curve passes below it and the residual is negative.
+    assert fit.residuals(scattered)[10] < -0.4
 
 
 def test_evaluate_agrees_with_the_coefficients() -> None:
@@ -101,17 +123,44 @@ def test_evaluate_agrees_with_the_coefficients() -> None:
 
 
 def test_evaluate_extrapolates_without_complaint() -> None:
-    """Outside the data the fit still answers; warning about it belongs to the caller."""
+    """Outside the data the fit still answers, with the polynomial rather than an edge value.
+
+    Asserted against the value itself: a fit that clamped x into the range of its data would
+    return something finite too, and finiteness alone would call that correct.
+    """
+    # 0.5*400^2 - 1.25*400 + 3 = 79503, worked out rather than taken from the call under test.
     fit = PolynomialFit.fit(series_from(CURVES[2]), 2)
-    assert math.isfinite(fit.evaluate(400.0))
+    assert fit.evaluate(400.0) == pytest.approx(79503.0, rel=1e-9)
 
 
 def test_residuals_keep_the_order_of_the_series() -> None:
-    """One residual per point, positioned as the points are."""
-    series = series_from(CURVES[2])
-    residuals = PolynomialFit.fit(series, 2).residuals(series)
-    assert len(residuals) == len(series.x)
-    assert all(abs(value) < 1e-9 for value in residuals)
+    """One residual per point, positioned as the points are.
+
+    Two points are displaced by different amounts at known indices, because on a series lying
+    exactly on its curve every residual is ~1e-14 and a reversal — or any permutation — would
+    pass unnoticed. Displaced, a reordering moves the large values away from the indices that
+    caused them.
+    """
+    base = series_from(CURVES[2])
+    moved = list(base.y)
+    moved[5] += 0.5
+    moved[20] -= 0.9
+    scattered = Series(
+        product=base.product,
+        article_no=base.article_no,
+        x_axis=base.x_axis,
+        y_axis=base.y_axis,
+        x=base.x,
+        y=tuple(moved),
+        kind=base.kind,
+        source=base.source,
+    )
+    residuals = PolynomialFit.fit(scattered, 2).residuals(scattered)
+    assert len(residuals) == len(scattered.x)
+    assert residuals[5] < -0.4
+    assert residuals[20] > 0.8
+    elsewhere = [value for index, value in enumerate(residuals) if index not in (5, 20)]
+    assert max(abs(value) for value in elsewhere) < 0.1
 
 
 def test_a_flat_series_has_no_r_squared() -> None:
@@ -161,7 +210,7 @@ def test_a_series_shorter_than_the_degree_is_refused() -> None:
         PolynomialFit.fit(series_of(6), 6)
     assert "7 points" in str(refusal.value)
     assert "has 6" in str(refusal.value)
-    assert PolynomialFit.fit(series_of(7), 6).degree == 6
+    assert len(PolynomialFit.fit(series_of(7), 6).coefficients) == 7
 
 
 def test_the_refusal_names_the_series() -> None:
@@ -174,16 +223,16 @@ def test_a_supported_fit_reports_full_rank() -> None:
     """Data that carries the degree asked of it gives rank `degree + 1`."""
     fit = PolynomialFit.fit(series_from(CURVES[6]), 6)
     assert fit.rank == 7
-    assert fit.numpy_warnings == ()
 
 
-def test_an_ill_conditioned_fit_reports_its_rank_and_stays_quiet() -> None:
-    """Points crowded into a numerically indistinguishable span cannot support degree 6.
+def test_an_ill_conditioned_fit_reports_its_rank() -> None:
+    """Points packed into a span too narrow to support degree 6 come back rank-deficient.
 
-    The rank comes back as numpy computed it and nothing is silenced globally: the whole suite
-    runs with `RankWarning` promoted to an error, and this fit still does not raise. What the
-    fit does not do is judge — there is no threshold here, and no rescaling of the points,
-    because the curves this package has to reproduce were fitted without either.
+    The points themselves are ordinary floats — 1e-7 apart is some 4.5e8 ulps, and `Series`
+    would reject anything closer as a duplicate x. What is degenerate is the Vandermonde matrix
+    over so narrow an interval, and the rank is where numpy says so. The fit passes no
+    judgement on it: no threshold of ours and no rescaling of the points, because the curves
+    this package has to reproduce were fitted without either.
     """
     crowded = Series(
         product="CROWDED",
@@ -198,3 +247,44 @@ def test_an_ill_conditioned_fit_reports_its_rank_and_stays_quiet() -> None:
     fit = PolynomialFit.fit(crowded, 6)
     assert fit.rank < fit.degree + 1
     assert len(fit.coefficients) == 7
+
+
+def test_the_metrics_match_a_case_worked_out_by_hand() -> None:
+    """Two points, a constant fit, and every number known before the code runs.
+
+    The best degree-0 fit through 0 and 2 is their mean, so the residuals are exactly +1 and
+    -1. That pins what no other test here can: `rmse` divides by the number of points, not by
+    a degrees-of-freedom correction — the classic "unbiased" edit would give 1.414 and pass
+    every other assertion in this file. R² is exactly 0: a constant explains none of the
+    variation, and the residual sum equals the deviation sum.
+    """
+    two_points = Series(
+        product="HAND",
+        article_no="000",
+        x_axis=KV,
+        y_axis=OPENING,
+        x=(1.0, 2.0),
+        y=(0.0, 2.0),
+        kind=DataKind.RAW,
+        source=SOURCE,
+    )
+    fit = PolynomialFit.fit(two_points, 0)
+    # Within one ulp rather than exact: the least-squares solver returns the mean as
+    # 0.99999999999999989. The tolerance is nowhere near wide enough to blur the distinction
+    # this test exists for — a degrees-of-freedom divisor would put rmse at 1.414.
+    assert fit.coefficients[0] == pytest.approx(1.0, rel=1e-15)
+    assert fit.residuals(two_points) == pytest.approx((1.0, -1.0), rel=1e-15)
+    metrics = fit.metrics(two_points)
+    assert metrics.max_abs_error == pytest.approx(1.0, rel=1e-15)
+    assert metrics.rmse == pytest.approx(1.0, rel=1e-15)
+    assert metrics.r_squared == pytest.approx(0.0, abs=1e-15)
+
+
+def test_a_negative_degree_is_refused() -> None:
+    """A negative degree is an input error, not something to hand to numpy.
+
+    Without the check `available < degree + 1` waves it through and the user meets numpy's
+    own `ValueError` as a traceback, which this package does not do to people.
+    """
+    with pytest.raises(HydrofitError, match="negative"):
+        PolynomialFit.fit(series_of(10), -1)
