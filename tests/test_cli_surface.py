@@ -10,6 +10,7 @@ The store is built here from literal values rather than read from a spreadsheet,
 these files depends on openpyxl, on a clock, or on where the test happened to run.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,63 @@ from hydrofit.models import AxisSpec, DataKind, Series, SourceRef
 from hydrofit.store import SeriesStore
 
 REFERENCE = Path(__file__).parent / "reference"
+
+# Reference files whose numbers a machine computes instead of storing. Their last digits do not
+# travel: one commit, one numpy version and one operating system produced different ones on two
+# CI runs minutes apart, because numpy picks a vectorised path from the processor it finds. What
+# is pinned for these is everything except the digits.
+COMPUTED = frozenset(
+    {
+        "fit.txt",
+        "fit-residuals.txt",
+        "eval.txt",
+        "eval-outside.txt",
+        "eval-outside-stderr.txt",
+    }
+)
+
+# Both tolerances are measured rather than chosen, and they answer different problems.
+#
+# The relative one covers values that are answers: the widest spread observed between two runs
+# was 3.5e-15, on the extrapolated -212.33. At 1e-12 there are three orders of margin, and a
+# change that mattered would be far larger — the scattered-data tests move a point by 0.5.
+#
+# The absolute one exists because near zero the relative bound cannot work: one residual went
+# from +4.4e-16 to -6.7e-16 between the same two runs, a change of sign. Its scale comes from
+# the data rather than from the noise: y runs to 1.5 in this store, where one ulp is 2.2e-16, so
+# 1e-12 is some four thousand ulps — nine hundred times the 1.1e-15 that was actually seen, and
+# still far below any residual that would mean the fit itself had moved.
+NUMBER_RELATIVE = 1e-12
+NUMBER_ABSOLUTE = 1e-12
+
+_NUMBER = re.compile(r"-?\d+\.\d+(?:e[+-]\d+)?|-?\d+e[+-]\d+")
+
+
+def assert_matches(printed: str, expected: str, computed: bool) -> None:
+    """Compare output against its reference file.
+
+    Args:
+        printed: What the command wrote.
+        expected: What the reference file holds.
+        computed: Whether the numbers in this output are computed. When they are, they are
+            compared as numbers and everything around them byte for byte; when they are not —
+            when they come from the store, as in `list` and `show` — the whole text is compared
+            byte for byte, because there is nothing in it a machine could round differently.
+    """
+    if not computed:
+        assert printed == expected
+        return
+    # The skeleton keeps every column name, every field in its order, the width each value
+    # starts at, and markers such as [extrapolated]. Only the digits are set aside.
+    assert _NUMBER.sub("<number>", printed) == _NUMBER.sub("<number>", expected)
+    assert [
+        float(match.group()) for match in _NUMBER.finditer(printed)
+    ] == pytest.approx(
+        [float(match.group()) for match in _NUMBER.finditer(expected)],
+        rel=NUMBER_RELATIVE,
+        abs=NUMBER_ABSOLUTE,
+    )
+
 
 KV = AxisSpec("Kv", "m³/h")
 OPENING = AxisSpec("n", "-")
@@ -189,7 +247,9 @@ def test_output_matches_its_reference(
     printed = capsys.readouterr().out
 
     assert code == 0
-    assert printed == (REFERENCE / name).read_text(encoding="utf-8")
+    assert_matches(
+        printed, (REFERENCE / name).read_text(encoding="utf-8"), name in COMPUTED
+    )
 
 
 def test_the_reference_output_shows_units_in_brackets() -> None:
@@ -243,8 +303,10 @@ def test_the_extrapolation_detail_matches_its_reference(
     )
 
     assert code == 0
-    assert capsys.readouterr().err == (REFERENCE / "eval-outside-stderr.txt").read_text(
-        encoding="utf-8"
+    assert_matches(
+        capsys.readouterr().err,
+        (REFERENCE / "eval-outside-stderr.txt").read_text(encoding="utf-8"),
+        computed=True,
     )
 
 
