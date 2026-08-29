@@ -70,6 +70,81 @@ def build_store(root: Path) -> Path:
     return root
 
 
+def crowded_store(root: Path) -> Path:
+    """Write a store whose only series cannot carry a degree-6 fit.
+
+    Seven points spanning 6e-7, a step of 1e-7 apart: ordinary floats, but the Vandermonde
+    matrix over so narrow an interval is degenerate, and numpy reports that by returning a rank
+    below the number of coefficients.
+
+    Args:
+        root: Directory to build the store in.
+
+    Returns:
+        The store directory.
+    """
+    SeriesStore(root).save(
+        Series(
+            product="TIGHT 10",
+            article_no="000",
+            x_axis=KV,
+            y_axis=OPENING,
+            x=tuple(1.0 + index * 1e-7 for index in range(7)),
+            y=(0.1, 0.2, 0.15, 0.3, 0.25, 0.4, 0.35),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
+def test_the_conditioning_report_keeps_its_shape(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The report a warned-about fit produces, checked by shape and not by digits.
+
+    Every other case in this file is pinned byte for byte, and this one deliberately is not.
+    These coefficients are the minimum-norm solution of a degenerate system, which is not
+    unique: an SVD selects one, and what LAPACK does when singular values tie is unspecified.
+    Two builds agreeing would show that they agree, not that the digits are portable, so
+    pinning them would pin an accident of one machine.
+
+    What is deterministic is the shape, and the shape is what the notice changes: `conditioning`
+    is the longest label in the report, so every field above it shifts into a wider column. That
+    reflow arrives exactly when the numbers deserve least trust.
+
+    Args:
+        tmp_path: Directory for this test's store.
+        capsys: Captured streams.
+    """
+    store = crowded_store(tmp_path / "store")
+
+    code = main(["fit", "tight-10-000", "--store", str(store)])
+
+    assert code == 0
+    lines = capsys.readouterr().out.splitlines()
+    labels = [line.split("  ")[0] for line in lines]
+    assert labels == [
+        "series",
+        "degree",
+        *(f"x{power}" for power in range(6, -1, -1)),
+        "r squared",
+        "max error",
+        "rmse",
+        "conditioning",
+    ]
+    assert lines[-1].endswith(
+        "rank 3 of the 7 coefficients a degree-6 fit needs: the data does not support it"
+    )
+    # Every value starts where the longest label ends, the notice included.
+    column = len("conditioning") + 2
+    assert all(line[column - 1] == " " and line[column] != " " for line in lines)
+    # An order of magnitude rather than a value: what makes this report worth a warning is that
+    # the coefficients are enormous for a curve whose y runs from 0.1 to 0.4.
+    coefficients = [float(line.split()[1]) for line in lines[2:9]]
+    assert max(abs(value) for value in coefficients) > 1e6
+
+
 @pytest.mark.parametrize(
     ("name", "argv"),
     [
@@ -171,17 +246,13 @@ def test_the_extrapolation_detail_matches_its_reference(
     )
 
 
-def test_a_supported_fit_prints_no_conditioning_line() -> None:
-    """Silence, pinned. A notice on every fit is a notice nobody reads."""
-    assert "conditioning" not in (REFERENCE / "fit.txt").read_text(encoding="utf-8")
-
-
 def test_every_non_ascii_character_in_the_references_comes_from_a_unit() -> None:
     """Nothing decorative may reach a console that cannot render it.
 
     The rule is not "avoid non-ASCII" — the data carries a cubic metre sign and must keep it.
-    The rule is that hydrofit adds none of its own, so the whole set of non-ASCII characters
-    across every pinned output is the set the fixtures put there.
+    The rule is that hydrofit adds none of its own, and the set below is pinned rather than
+    derived: a fixture introducing a second unit is supposed to fail here and be added
+    deliberately. What this covers is the pinned output; argparse's own screens are not in it.
     """
     found = {
         character

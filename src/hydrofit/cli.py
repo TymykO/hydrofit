@@ -1,4 +1,4 @@
-"""Command line surface: import a workbook, list what is stored, fit and evaluate a series.
+"""Command line surface: import a workbook, list and inspect what is stored, fit, evaluate.
 
 Thin by design — parse arguments, call a module, print. No domain logic lives here.
 
@@ -51,9 +51,9 @@ _DEFAULT_STORE = "store"
 _RANGE_SEPARATOR = " .. "
 
 # Attached to the answer itself rather than printed beside it. Either single-stream choice
-# fails a user who redirects: everything on stdout writes prose into a file of numbers, and
-# everything on stderr strips the caveat off a value that needs it. In the line, the caveat
-# travels wherever the number travels.
+# fails a user who redirects: everything on stdout writes prose into what is otherwise a file
+# holding one number, and everything on stderr strips the caveat off a value that needs it. In
+# the line, the caveat travels wherever the number travels.
 _EXTRAPOLATED = "  [extrapolated]"
 
 
@@ -256,16 +256,16 @@ def _run_fit(args: argparse.Namespace, out: TextIO) -> int:
         ("max error", repr(metrics.max_abs_error)),
         ("rmse", repr(metrics.rmse)),
     ]
-    # Only when it has something to say. A line that appears on every fit is a line that stops
-    # being read, and it belongs in the output rather than on stderr for the same reason the
-    # extrapolation marker does: these coefficients are the ones that must not be redirected
-    # into a file that looks clean.
+    # Only when it has something to say: a line that appears on every fit is a line that
+    # stops being read. Prose is at home here and not in `eval` because the streams have
+    # different shapes — see the comment on `_EXTRAPOLATED` — and because these coefficients
+    # are exactly the ones that must not be redirected into a file that looks clean.
     if fit.rank < fit.degree + 1:
         fields.append(
             (
                 "conditioning",
-                f"rank {fit.rank} of {fit.degree + 1}, "
-                f"too low for degree {fit.degree}: the data does not support this fit",
+                f"rank {fit.rank} of the {fit.degree + 1} coefficients "
+                f"a degree-{fit.degree} fit needs: the data does not support it",
             )
         )
     width = max(len(name) for name, _ in fields)
@@ -297,15 +297,17 @@ def _run_eval(args: argparse.Namespace, out: TextIO) -> int:
     fit = PolynomialFit.fit(series, args.degree)
     low, high = series.x_range()
     outside = not low <= args.x <= high
-    _emit([f"{fit.evaluate(args.x)!r}{_EXTRAPOLATED if outside else ''}"], out)
     if outside:
-        # The detail, where a data file will not collect it. The marker above is what keeps the
-        # value from travelling alone.
+        # Written before the answer so that the two orders agree. stdout is block-buffered into
+        # a pipe and line-buffered into a terminal, while stderr is neither; printing the
+        # sentence second would put it first for one reader and second for the other, and a
+        # documented transcript could then only be true of one of them.
         print(
             f"warning: x={args.x!r} lies outside {series.x_axis.label} "
             f"{_fmt_range((low, high))}; a degree-{fit.degree} polynomial diverges there",
             file=sys.stderr,
         )
+    _emit([f"{fit.evaluate(args.x)!r}{_EXTRAPOLATED if outside else ''}"], out)
     return 0
 
 
@@ -398,7 +400,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     evaluation.add_argument("slug", help="identifier from the list output")
     evaluation.add_argument(
-        "--x", type=float, required=True, metavar="V", help="where to evaluate"
+        "--x",
+        type=float,
+        required=True,
+        metavar="V",
+        help="where to evaluate; an answer from outside the data is marked in the line",
     )
 
     return parser

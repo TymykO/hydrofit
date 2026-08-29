@@ -6,6 +6,7 @@ as one line and exit code 1 — never as a traceback, which is a bug report aime
 person.
 """
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -356,8 +357,15 @@ def test_fit_prints_the_coefficients_and_the_metrics(
     out = capsys.readouterr().out
     assert "degree     2" in out
     assert "r squared  1.0" in out
-    # The coefficients of x^2 are 1, 0, 0 — printed in descending powers, so x2 comes first.
-    assert out.index("x2") < out.index("x1") < out.index("x0")
+    printed = dict(line.split(maxsplit=1) for line in out.splitlines() if line)
+    # The series is y = x^2, so the coefficients are 1, 0, 0 — read against their own labels
+    # rather than by position. Descending order is an interface, not a preference: these
+    # numbers are pasted into a spreadsheet formula that reads the highest power first, and a
+    # reversed tuple would put every value under the wrong name while the report still looked
+    # perfectly ordinary.
+    assert float(printed["x2"]) == pytest.approx(1.0)
+    assert float(printed["x1"]) == pytest.approx(0.0, abs=1e-9)
+    assert float(printed["x0"]) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_fit_says_nothing_about_conditioning_when_the_rank_is_full(
@@ -373,26 +381,27 @@ def test_fit_says_nothing_about_conditioning_when_the_rank_is_full(
         capsys: Captured streams.
     """
     store = parabola_store(tmp_path / "store")
-    main(["fit", "test-10-000", "--degree", "2", "--store", str(store)])
-    assert "conditioning" not in capsys.readouterr().out
+    assert main(["fit", "test-10-000", "--degree", "2", "--store", str(store)]) == 0
+    out = capsys.readouterr().out
+    # Anchored on something present: without this the assertion below would also hold for a
+    # command that printed nothing at all.
+    assert "r squared" in out
+    assert "conditioning" not in out
 
 
-def test_fit_says_the_conditioning_in_words_when_the_rank_falls_short(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Points too close together cannot carry degree 6, and the output says which and why.
+def crowded_store(root: Path) -> Path:
+    """Write a store whose only series cannot carry a degree-6 fit.
 
-    The rank is on the fit object for exactly this: a number with no sentence around it is not
-    something a user can act on, and the line belongs in the output rather than on stderr
-    because these coefficients are the ones that must not be redirected into a clean-looking
-    file.
+    Seven points spanning 6e-7: ordinary floats, but the Vandermonde matrix over so narrow an
+    interval is degenerate and numpy answers with a rank below the number of coefficients.
 
     Args:
-        tmp_path: Working directory for this test.
-        capsys: Captured streams.
+        root: Directory to build the store in.
+
+    Returns:
+        The store directory.
     """
-    store = tmp_path / "store"
-    SeriesStore(store).save(
+    SeriesStore(root).save(
         Series(
             product="TIGHT 10",
             article_no="000",
@@ -404,10 +413,7 @@ def test_fit_says_the_conditioning_in_words_when_the_rank_falls_short(
             source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
         )
     )
-    assert main(["fit", "tight-10-000", "--store", str(store)]) == 0
-    out = capsys.readouterr().out
-    assert "conditioning" in out
-    assert "does not support" in out
+    return root
 
 
 def test_fit_refuses_a_series_that_is_too_short(
@@ -489,7 +495,87 @@ def test_eval_marks_the_answer_when_it_comes_from_outside_the_data(
     assert captured.out.strip().endswith("[extrapolated]")
     assert float(captured.out.split()[0]) == pytest.approx(1600.0)
     assert "diverges" in captured.err
-    assert "0.5" not in captured.out.split()[1]
+    # The answer line is the number and the marker, and nothing else: the range, the units and
+    # the sentence belong to the other stream. Asserted on the whole line, because a check
+    # against one token can only be true.
+    assert len(captured.out.split()) == 2
+    assert "10.5" not in captured.out
+
+
+def test_eval_marks_an_answer_from_below_the_data_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Outside is two sides. The data starts at x = 1.0; this asks for 0.25.
+
+    Covering only the upper side would leave `x > high` passing every test in this file while
+    silently answering below the data with no marker at all.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    assert (
+        main(
+            [
+                "eval",
+                "test-10-000",
+                "--x",
+                "0.25",
+                "--degree",
+                "2",
+                "--store",
+                str(store),
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.out.strip().endswith("[extrapolated]")
+    assert "diverges" in captured.err
+
+
+def test_eval_treats_the_ends_of_the_data_as_inside_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The first and last points are data, not extrapolation.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    for edge in ("1.0", "10.5"):
+        main(
+            ["eval", "test-10-000", "--x", edge, "--degree", "2", "--store", str(store)]
+        )
+        captured = capsys.readouterr()
+        assert "extrapolated" not in captured.out
+        assert captured.err == ""
+
+
+def test_the_conditioning_line_travels_alone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rank-deficient fit says its piece and nothing else says anything.
+
+    numpy raises its own RankWarning for this class of fit when asked for the short form of the
+    result; the fitting layer asks for the long one, so the rank arrives as a number and no
+    warning is raised at all. Both halves are asserted, and they need different instruments:
+    `capsys` sees what is written to the streams and is blind to `warnings.warn`, which pytest
+    intercepts before it reaches stderr — measured by planting one, which left an
+    stderr-only assertion green.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = crowded_store(tmp_path / "store")
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        assert main(["fit", "tight-10-000", "--store", str(store)]) == 0
+    assert [str(entry.message) for entry in raised] == []
+    assert capsys.readouterr().err == ""
 
 
 def test_eval_refuses_an_unknown_series(

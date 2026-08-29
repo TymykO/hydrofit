@@ -8,8 +8,11 @@ hydrofit imports x/y series from catalogue spreadsheets, keeps them as plain tex
 polynomial of a chosen degree, reports how well that fit holds, plots the data against it, and
 exports coefficient tables in the column layouts that downstream spreadsheets expect.
 
-**Status:** early development. Series can be imported from catalogue spreadsheets, listed and
-inspected. Fitting, plotting and export are not implemented yet.
+**Status:** early development. Series can be imported from catalogue spreadsheets, listed,
+inspected, fitted and evaluated; the coefficients reproduce the ones a legacy tool published
+for the same curves. Measured across all fourteen catalogue curves, the largest relative
+difference is 3.1e-12; what the test suite holds is a tenth of that as an early warning, and a
+hundred-fold margin as the promise. Plotting and export are not implemented yet.
 
 ## Requirements
 
@@ -98,6 +101,66 @@ imported at   2026-08-19T12:11:11+00:00
 ```
 
 `--points` appends every pair, written so that no digit is lost in the printing.
+
+### Fit
+
+```bash
+hydrofit fit stad-10-52-851-010
+```
+
+```
+series     stad-10-52-851-010
+degree     6
+x6         -22.92960500971207
+x5         110.3138223543574
+x4         -206.3105377713971
+x3         191.08483423614774
+x2         -92.85444040852808
+x1         24.462548199081514
+x0         -0.5732876628312868
+r squared  0.9985481719731737
+max error  0.08767295306030265
+rmse       0.038552677500576324
+```
+
+The coefficients run in descending powers, the order a spreadsheet formula reads them in.
+`--degree N` fits another degree (default: 6), and `--residuals` appends the difference between
+the curve and every point.
+
+A fit the data cannot carry says so, on a line that appears only then:
+
+```
+conditioning  rank 3 of the 7 coefficients a degree-6 fit needs: the data does not support it
+```
+
+The numbers above such a line are still printed, because they are what the request produced —
+but a rank below `degree + 1` means the points do not determine that many coefficients, and the
+values will look like the ±2e10 they are. A series shorter than `degree + 1` points is refused
+outright.
+
+### Evaluate
+
+```bash
+hydrofit eval stad-10-52-851-010 --x 0.8
+```
+
+```
+3.0373228261292198
+```
+
+Outside the range of the data the answer is marked, and the reason goes to stderr:
+
+```
+$ hydrofit eval stad-10-52-851-010 --x 2.0
+warning: x=2.0 lies outside Kv [m³/h] 0.054 .. 1.36; a degree-6 polynomial diverges there
+-32.808288634087845  [extrapolated]
+```
+
+The split is deliberate. A degree-6 polynomial does not merely lose accuracy outside its data,
+it diverges — the setting above reads -32.8 where the instrument goes from 0.5 to 4 — so the
+caveat has to survive `hydrofit eval ... > answer.txt`, which is why it is in the answer line
+and not only in the sentence. The sentence stays out of that file for the opposite reason. This
+is not an error: the exit code is 0.
 
 A problem you can fix — an absent file, an unknown series, a sheet that breaks the convention —
 arrives as one line on stderr and exit code 1, never as a traceback.
