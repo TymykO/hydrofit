@@ -1,10 +1,12 @@
 """Polynomial fits, and the numbers that say how closely one follows its points."""
 
 import math
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 
+from hydrofit.errors import HydrofitError
 from hydrofit.models import Series
 
 DEFAULT_DEGREE = 6
@@ -39,10 +41,20 @@ class PolynomialFit:
         coefficients: Powers in descending order, ``x^n`` down to ``x^0``. This is the order
             the spreadsheet formulas consuming them expect; reversing it would pass every
             test of the fit itself and fail against the legacy numbers.
+        rank: Rank numpy's least-squares solution reported. Data that supports the degree
+            asked of it gives ``degree + 1``; anything lower is numpy's own criterion for
+            warning about conditioning. The number is passed on as it came — there is no
+            threshold here, because a threshold would be our opinion about someone else's
+            data, and the curves this package must reproduce were fitted without one.
+        numpy_warnings: What numpy said during the fit, if anything, captured rather than
+            silenced. Kept so a caller can repeat it in its own words instead of letting a
+            warning surface as noise, or vanish.
     """
 
     degree: int
     coefficients: tuple[float, ...]
+    rank: int
+    numpy_warnings: tuple[str, ...]
 
     @classmethod
     def fit(cls, series: Series, degree: int = DEFAULT_DEGREE) -> "PolynomialFit":
@@ -58,9 +70,32 @@ class PolynomialFit:
 
         Returns:
             The fitted polynomial.
+
+        Raises:
+            HydrofitError: If the series holds fewer than ``degree + 1`` points. The check
+                lives here and not in ``Series``, which cannot know at construction time what
+                degree will later be asked of it.
         """
-        coefficients = np.polyfit(np.asarray(series.x), np.asarray(series.y), degree)
-        return cls(degree=degree, coefficients=tuple(float(c) for c in coefficients))
+        available = len(series.x)
+        if available < degree + 1:
+            raise HydrofitError(
+                f"a degree-{degree} fit needs at least {degree + 1} points, "
+                f"and {series.product} has {available}"
+            )
+        # full=True is what carries the rank out; measured 2026-08-29, numpy raises its
+        # RankWarning only when full is False, so the two facts cannot be had from one call.
+        # The recorder stays anyway: whatever a future numpy emits is kept, not leaked.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            coefficients, _residuals, rank, _singular_values, _rcond = np.polyfit(
+                np.asarray(series.x), np.asarray(series.y), degree, full=True
+            )
+        return cls(
+            degree=degree,
+            coefficients=tuple(float(value) for value in coefficients),
+            rank=int(rank),
+            numpy_warnings=tuple(str(entry.message) for entry in caught),
+        )
 
     def evaluate(self, x: float) -> float:
         """Evaluate the polynomial at one x.

@@ -10,6 +10,7 @@ import math
 import numpy as np
 import pytest
 
+from hydrofit.errors import HydrofitError
 from hydrofit.fitting import DEFAULT_DEGREE, PolynomialFit
 from hydrofit.models import AxisSpec, DataKind, Series, SourceRef
 
@@ -133,3 +134,67 @@ def test_a_flat_series_has_no_r_squared() -> None:
     metrics = PolynomialFit.fit(flat, 2).metrics(flat)
     assert math.isnan(metrics.r_squared)
     assert metrics.max_abs_error == pytest.approx(0.0, abs=1e-9)
+
+
+def series_of(count: int) -> Series:
+    """Build a series of exactly this many points, on a curve of no particular interest."""
+    x = np.linspace(1.0, 2.0, count)
+    return Series(
+        product="SHORT",
+        article_no="000",
+        x_axis=KV,
+        y_axis=OPENING,
+        x=tuple(float(value) for value in x),
+        y=tuple(float(value) for value in x**2),
+        kind=DataKind.RAW,
+        source=SOURCE,
+    )
+
+
+def test_a_series_shorter_than_the_degree_is_refused() -> None:
+    """`degree` points cannot carry a degree-`degree` fit; `degree + 1` can.
+
+    The boundary is asserted from both sides, because an off-by-one here would surface as a
+    silently over-fitted curve rather than as an error.
+    """
+    with pytest.raises(HydrofitError) as refusal:
+        PolynomialFit.fit(series_of(6), 6)
+    assert "7 points" in str(refusal.value)
+    assert "has 6" in str(refusal.value)
+    assert PolynomialFit.fit(series_of(7), 6).degree == 6
+
+
+def test_the_refusal_names_the_series() -> None:
+    """The message says which curve was too short, not merely that one was."""
+    with pytest.raises(HydrofitError, match="SHORT"):
+        PolynomialFit.fit(series_of(3), 6)
+
+
+def test_a_supported_fit_reports_full_rank() -> None:
+    """Data that carries the degree asked of it gives rank `degree + 1`."""
+    fit = PolynomialFit.fit(series_from(CURVES[6]), 6)
+    assert fit.rank == 7
+    assert fit.numpy_warnings == ()
+
+
+def test_an_ill_conditioned_fit_reports_its_rank_and_stays_quiet() -> None:
+    """Points crowded into a numerically indistinguishable span cannot support degree 6.
+
+    The rank comes back as numpy computed it and nothing is silenced globally: the whole suite
+    runs with `RankWarning` promoted to an error, and this fit still does not raise. What the
+    fit does not do is judge — there is no threshold here, and no rescaling of the points,
+    because the curves this package has to reproduce were fitted without either.
+    """
+    crowded = Series(
+        product="CROWDED",
+        article_no="000",
+        x_axis=KV,
+        y_axis=OPENING,
+        x=tuple(1.0 + index * 1e-7 for index in range(7)),
+        y=(0.1, 0.2, 0.15, 0.3, 0.25, 0.4, 0.35),
+        kind=DataKind.RAW,
+        source=SOURCE,
+    )
+    fit = PolynomialFit.fit(crowded, 6)
+    assert fit.rank < fit.degree + 1
+    assert len(fit.coefficients) == 7
