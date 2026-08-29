@@ -506,3 +506,20 @@ def test_eval_refuses_an_unknown_series(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert len(captured.err.strip().splitlines()) == 1
+
+
+def test_the_warning_names_the_degree_it_was_asked_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The sentence describes the fit that was made, not the default one.
+
+    A hard-coded degree would read correctly on every run that used the default and lie on
+    every other, in a detail small enough that nobody would check it.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    main(["eval", "test-10-000", "--x", "40", "--degree", "3", "--store", str(store)])
+    assert "degree-3 polynomial" in capsys.readouterr().err

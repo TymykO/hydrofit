@@ -77,6 +77,19 @@ def build_store(root: Path) -> Path:
         ("list-product.txt", ["list", "--product", "ta-bvs"]),
         ("show.txt", ["show", "stad-10-52-851-010"]),
         ("show-points.txt", ["show", "stad-10-52-851-010", "--points"]),
+        # Degree 2, because the pinned store holds three points: enough for degree + 1 and no
+        # more. The real curves are fitted at 6, and what is pinned here is the shape of the
+        # report rather than the arithmetic, which the reference tests measure on real data.
+        ("fit.txt", ["fit", "stad-10-52-851-010", "--degree", "2"]),
+        (
+            "fit-residuals.txt",
+            ["fit", "stad-10-52-851-010", "--degree", "2", "--residuals"],
+        ),
+        ("eval.txt", ["eval", "stad-10-52-851-010", "--degree", "2", "--x", "0.2"]),
+        (
+            "eval-outside.txt",
+            ["eval", "stad-10-52-851-010", "--degree", "2", "--x", "5"],
+        ),
     ],
 )
 def test_output_matches_its_reference(
@@ -122,3 +135,58 @@ def test_reference_files_are_stored_with_lf() -> None:
     """
     for path in sorted(REFERENCE.glob("*.txt")):
         assert b"\r" not in path.read_bytes(), path.name
+
+
+def test_the_extrapolation_detail_matches_its_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The sentence on stderr is pinned too, not only the marked answer on stdout.
+
+    Both halves of that split are a surface a user reads, and a warning silently reworded is
+    exactly the change these tests exist to catch. The marker rides in the answer; the sentence
+    explains it; neither is allowed to drift unnoticed.
+
+    Args:
+        tmp_path: Directory for this test's store.
+        capsys: Captured streams.
+    """
+    store = build_store(tmp_path / "store")
+
+    code = main(
+        [
+            "eval",
+            "stad-10-52-851-010",
+            "--degree",
+            "2",
+            "--x",
+            "5",
+            "--store",
+            str(store),
+        ]
+    )
+
+    assert code == 0
+    assert capsys.readouterr().err == (REFERENCE / "eval-outside-stderr.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_a_supported_fit_prints_no_conditioning_line() -> None:
+    """Silence, pinned. A notice on every fit is a notice nobody reads."""
+    assert "conditioning" not in (REFERENCE / "fit.txt").read_text(encoding="utf-8")
+
+
+def test_every_non_ascii_character_in_the_references_comes_from_a_unit() -> None:
+    """Nothing decorative may reach a console that cannot render it.
+
+    The rule is not "avoid non-ASCII" — the data carries a cubic metre sign and must keep it.
+    The rule is that hydrofit adds none of its own, so the whole set of non-ASCII characters
+    across every pinned output is the set the fixtures put there.
+    """
+    found = {
+        character
+        for path in REFERENCE.glob("*.txt")
+        for character in path.read_text(encoding="utf-8")
+        if ord(character) > 127
+    }
+    assert found == {"³"}
