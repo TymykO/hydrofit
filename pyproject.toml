@@ -46,6 +46,12 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A rank-deficient fit must reach the caller as a number, never as a warning nobody reads.
+# Promoted to an error so that a RankWarning stops the suite rather than scrolling past it;
+# seen to do so against one raised on purpose. The single test that runs the rank-deficient
+# path installs its own recorder, so this promotion does not apply inside it — that test
+# asserts the absence itself, which is the stricter of the two.
+filterwarnings = ["error::numpy.exceptions.RankWarning"]
 
 [tool.coverage.run]
 source = ["src/hydrofit"]

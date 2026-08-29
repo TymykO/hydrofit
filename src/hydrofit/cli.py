@@ -1,4 +1,4 @@
-"""Command line surface: import a workbook, list what is stored, show one series.
+"""Command line surface: import a workbook, list and inspect what is stored, fit, evaluate.
 
 Thin by design — parse arguments, call a module, print. No domain logic lives here.
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TextIO
 
 from hydrofit.errors import HydrofitError
+from hydrofit.fitting import DEFAULT_DEGREE, PolynomialFit
 from hydrofit.importer import import_workbook
 from hydrofit.models import DataKind, Series
 from hydrofit.store import SeriesStore
@@ -48,6 +49,12 @@ _DEFAULT_STORE = "store"
 # render should be the ones the data itself carries, such as the unit m³/h — decoration has no
 # business adding to that list.
 _RANGE_SEPARATOR = " .. "
+
+# Attached to the answer itself rather than printed beside it. Either single-stream choice
+# fails a user who redirects: everything on stdout writes prose into what is otherwise a file
+# holding one number, and everything on stderr strips the caveat off a value that needs it. In
+# the line, the caveat travels wherever the number travels.
+_EXTRAPOLATED = "  [extrapolated]"
 
 
 def _emit(lines: Sequence[str], out: TextIO) -> None:
@@ -220,6 +227,90 @@ def _run_show(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+def _run_fit(args: argparse.Namespace, out: TextIO) -> int:
+    """Fit a stored series and print the coefficients with the quality of the fit.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to print to.
+
+    Returns:
+        Process exit code.
+
+    Raises:
+        HydrofitError: If the slug is unknown, or the series cannot carry the degree.
+    """
+    series: Series = SeriesStore(Path(args.store)).load(args.slug)
+    fit = PolynomialFit.fit(series, args.degree)
+    metrics = fit.metrics(series)
+    fields = [
+        ("series", series.slug),
+        ("degree", str(fit.degree)),
+        *(
+            (f"x{power}", repr(value))
+            for power, value in zip(
+                range(fit.degree, -1, -1), fit.coefficients, strict=True
+            )
+        ),
+        ("r squared", repr(metrics.r_squared)),
+        ("max error", repr(metrics.max_abs_error)),
+        ("rmse", repr(metrics.rmse)),
+    ]
+    # Only when it has something to say: a line that appears on every fit is a line that
+    # stops being read. Prose is at home here and not in `eval` because the streams have
+    # different shapes — see the comment on `_EXTRAPOLATED` — and because these coefficients
+    # are exactly the ones that must not be redirected into a file that looks clean.
+    if fit.rank < fit.degree + 1:
+        fields.append(
+            (
+                "conditioning",
+                f"rank {fit.rank} of the {fit.degree + 1} coefficients "
+                f"a degree-{fit.degree} fit needs: the data does not support it",
+            )
+        )
+    width = max(len(name) for name, _ in fields)
+    lines = [f"{name.ljust(width)}  {value}" for name, value in fields]
+    if args.residuals:
+        lines.append("")
+        lines.extend(
+            f"  {x!r},{residual!r}"
+            for x, residual in zip(series.x, fit.residuals(series), strict=True)
+        )
+    _emit(lines, out)
+    return 0
+
+
+def _run_eval(args: argparse.Namespace, out: TextIO) -> int:
+    """Evaluate the fitted polynomial at one x.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to print to.
+
+    Returns:
+        Process exit code. Extrapolation is not an error and does not change it.
+
+    Raises:
+        HydrofitError: If the slug is unknown, or the series cannot carry the degree.
+    """
+    series: Series = SeriesStore(Path(args.store)).load(args.slug)
+    fit = PolynomialFit.fit(series, args.degree)
+    low, high = series.x_range()
+    outside = not low <= args.x <= high
+    if outside:
+        # Written before the answer so that the two orders agree. stdout is block-buffered into
+        # a pipe and line-buffered into a terminal, while stderr is neither; printing the
+        # sentence second would put it first for one reader and second for the other, and a
+        # documented transcript could then only be true of one of them.
+        print(
+            f"warning: x={args.x!r} lies outside {series.x_axis.label} "
+            f"{_fmt_range((low, high))}; a degree-{fit.degree} polynomial diverges there",
+            file=sys.stderr,
+        )
+    _emit([f"{fit.evaluate(args.x)!r}{_EXTRAPOLATED if outside else ''}"], out)
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
@@ -278,6 +369,44 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("slug", help="identifier from the list output")
     show.add_argument("--points", action="store_true", help="print the points too")
 
+    def with_degree(sub: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        """Add the degree option shared by the fitting subcommands.
+
+        Args:
+            sub: The subparser to extend.
+
+        Returns:
+            The same subparser.
+        """
+        sub.add_argument(
+            "--degree",
+            type=int,
+            default=DEFAULT_DEGREE,
+            metavar="N",
+            help=f"degree of the polynomial (default: {DEFAULT_DEGREE})",
+        )
+        return sub
+
+    fitting = with_degree(
+        with_store(subcommands.add_parser("fit", help="fit one series"))
+    )
+    fitting.add_argument("slug", help="identifier from the list output")
+    fitting.add_argument(
+        "--residuals", action="store_true", help="print the residual at every point"
+    )
+
+    evaluation = with_degree(
+        with_store(subcommands.add_parser("eval", help="evaluate one series at an x"))
+    )
+    evaluation.add_argument("slug", help="identifier from the list output")
+    evaluation.add_argument(
+        "--x",
+        type=float,
+        required=True,
+        metavar="V",
+        help="where to evaluate; an answer from outside the data is marked in the line",
+    )
+
     return parser
 
 
@@ -290,7 +419,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Process exit code: 0 on success, 1 for a problem the user can fix.
     """
-    runners = {"import": _run_import, "list": _run_list, "show": _run_show}
+    runners = {
+        "import": _run_import,
+        "list": _run_list,
+        "show": _run_show,
+        "fit": _run_fit,
+        "eval": _run_eval,
+    }
     try:
         # Parsing is inside the guard because `--help` prints from within it. The import help
         # spells the axis labels the way real sheets carry them, superscript and all, so the
