@@ -12,7 +12,7 @@ import pytest
 from openpyxl import Workbook
 
 from hydrofit.cli import main
-from hydrofit.models import DataKind
+from hydrofit.models import AxisSpec, DataKind, Series, SourceRef
 from hydrofit.store import SeriesStore
 
 LABELS = ("n [-]", "Kv [m³/h]")
@@ -311,3 +311,198 @@ def test_help_survives_a_console_that_cannot_render_it(
 
     assert main(["import", "--help"]) == 1
     assert "set PYTHONIOENCODING=utf-8" in capsys.readouterr().err
+
+
+def parabola_store(root: Path, points: int = 20) -> Path:
+    """Write a store holding one series that lies exactly on y = x^2.
+
+    Built from literal values rather than imported, so nothing here depends on a spreadsheet or
+    on which curve the catalogue happens to carry.
+
+    Args:
+        root: Directory to build the store in.
+        points: How many points the series gets.
+
+    Returns:
+        The store directory.
+    """
+    x = tuple(1.0 + index * 0.5 for index in range(points))
+    SeriesStore(root).save(
+        Series(
+            product="TEST 10",
+            article_no="000",
+            x_axis=AxisSpec("Kv", "m³/h"),
+            y_axis=AxisSpec("n", "-"),
+            x=x,
+            y=tuple(value**2 for value in x),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
+def test_fit_prints_the_coefficients_and_the_metrics(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A degree-2 fit of a parabola recovers it, and says so in three numbers.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    assert main(["fit", "test-10-000", "--degree", "2", "--store", str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "degree     2" in out
+    assert "r squared  1.0" in out
+    # The coefficients of x^2 are 1, 0, 0 — printed in descending powers, so x2 comes first.
+    assert out.index("x2") < out.index("x1") < out.index("x0")
+
+
+def test_fit_says_nothing_about_conditioning_when_the_rank_is_full(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A fit the data supports carries no notice.
+
+    A line that appears every time is a line nobody reads, which is exactly how a real warning
+    gets missed.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    main(["fit", "test-10-000", "--degree", "2", "--store", str(store)])
+    assert "conditioning" not in capsys.readouterr().out
+
+
+def test_fit_says_the_conditioning_in_words_when_the_rank_falls_short(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Points too close together cannot carry degree 6, and the output says which and why.
+
+    The rank is on the fit object for exactly this: a number with no sentence around it is not
+    something a user can act on, and the line belongs in the output rather than on stderr
+    because these coefficients are the ones that must not be redirected into a clean-looking
+    file.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = tmp_path / "store"
+    SeriesStore(store).save(
+        Series(
+            product="TIGHT 10",
+            article_no="000",
+            x_axis=AxisSpec("Kv", "m³/h"),
+            y_axis=AxisSpec("n", "-"),
+            x=tuple(1.0 + index * 1e-7 for index in range(7)),
+            y=(0.1, 0.2, 0.15, 0.3, 0.25, 0.4, 0.35),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    assert main(["fit", "tight-10-000", "--store", str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "conditioning" in out
+    assert "does not support" in out
+
+
+def test_fit_refuses_a_series_that_is_too_short(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Too few points is one line and exit code 1, never a traceback.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store", points=4)
+    assert main(["fit", "test-10-000", "--store", str(store)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "at least 7 points" in captured.err
+
+
+def test_fit_prints_a_residual_for_every_point_on_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--residuals` adds one line per point and nothing else.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    main(["fit", "test-10-000", "--degree", "2", "--residuals", "--store", str(store)])
+    listed = capsys.readouterr().out.split("\n\n")[-1].strip().splitlines()
+    assert len(listed) == 20
+
+
+def test_eval_answers_inside_the_data_without_a_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Inside the range the answer stands alone.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    assert (
+        main(
+            ["eval", "test-10-000", "--x", "3", "--degree", "2", "--store", str(store)]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert float(captured.out.strip()) == pytest.approx(9.0)
+    assert "extrapolated" not in captured.out
+    assert captured.err == ""
+
+
+def test_eval_marks_the_answer_when_it_comes_from_outside_the_data(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Outside the range the marker rides in the answer line and the detail goes to stderr.
+
+    Both halves matter and for opposite reasons. Redirecting stdout to a file must not lose the
+    caveat, which is why the marker is in the line; and it must not fill a file of numbers with
+    prose, which is why the sentence is not. Extrapolating is not an error, so the exit code
+    stays 0.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    assert (
+        main(
+            ["eval", "test-10-000", "--x", "40", "--degree", "2", "--store", str(store)]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.out.strip().endswith("[extrapolated]")
+    assert float(captured.out.split()[0]) == pytest.approx(1600.0)
+    assert "diverges" in captured.err
+    assert "0.5" not in captured.out.split()[1]
+
+
+def test_eval_refuses_an_unknown_series(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unknown slug is one line and exit code 1.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    assert main(["eval", "nope", "--x", "1", "--store", str(store)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
