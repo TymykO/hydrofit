@@ -574,8 +574,12 @@ def test_the_conditioning_line_travels_alone(
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
         assert main(["fit", "tight-10-000", "--store", str(store)]) == 0
+    captured = capsys.readouterr()
+    # The half this test is named for. Without it the silence below would also be reported by a
+    # run that had stopped saying anything at all.
+    assert "conditioning" in captured.out
     assert [str(entry.message) for entry in raised] == []
-    assert capsys.readouterr().err == ""
+    assert captured.err == ""
 
 
 def test_eval_refuses_an_unknown_series(

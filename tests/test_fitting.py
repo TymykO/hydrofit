@@ -84,9 +84,9 @@ def test_scatter_lowers_every_metric_it_should() -> None:
     """A displaced point shows up in all three numbers, and in the residual that caused it.
 
     The residual carries the sign the docstring of `residuals` promises, `fit(x) - y`, and
-    that signed number is what a caller prints. Two other tests now hold the same line — the
-    one worked out by hand and the one about ordering — and a red trial confirms it: flipping
-    the sign fails all three.
+    that signed number is what a caller prints. Two other tests hold the same line — the one
+    worked out by hand and the one about ordering — and reversing the sign deliberately fails
+    all three.
     """
     coefficients = CURVES[2]
     series = series_from(coefficients)
@@ -228,11 +228,13 @@ def test_a_supported_fit_reports_full_rank() -> None:
 def test_an_ill_conditioned_fit_reports_its_rank() -> None:
     """Points packed into a span too narrow to support degree 6 come back rank-deficient.
 
-    The points themselves are ordinary floats — 1e-7 apart is some 4.5e8 ulps, and `Series`
-    would reject anything closer as a duplicate x. What is degenerate is the Vandermonde matrix
-    over so narrow an interval, and the rank is where numpy says so. The fit passes no
-    judgement on it: no threshold of ours and no rescaling of the points, because the curves
-    this package has to reproduce were fitted without either.
+    The points themselves are ordinary floats, and not remarkably close ones: 1e-7 apart is
+    some 4.5e8 ulps, with room for many more points between any two of them. The Vandermonde
+    matrix over so narrow an interval is not singular either — its determinant is around
+    2.5e-140 — but that is indistinguishable from singular at the cutoff a solver works to, and
+    the rank is where numpy says so.
+    The fit passes no judgement on it: no threshold of ours and no rescaling of the points,
+    because the curves this package has to reproduce were fitted without either.
     """
     crowded = Series(
         product="CROWDED",

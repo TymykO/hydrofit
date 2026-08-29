@@ -74,8 +74,9 @@ def crowded_store(root: Path) -> Path:
     """Write a store whose only series cannot carry a degree-6 fit.
 
     Seven points spanning 6e-7, a step of 1e-7 apart: ordinary floats, but the Vandermonde
-    matrix over so narrow an interval is degenerate, and numpy reports that by returning a rank
-    below the number of coefficients.
+    matrix over so narrow an interval is singular to any precision a solver can work in — its
+    determinant is around 2.5e-140 — and numpy reports that by returning a rank below the number
+    of coefficients.
 
     Args:
         root: Directory to build the store in.
@@ -104,8 +105,9 @@ def test_the_conditioning_report_keeps_its_shape(
     """The report a warned-about fit produces, checked by shape and not by digits.
 
     Every other case in this file is pinned byte for byte, and this one deliberately is not.
-    These coefficients are the minimum-norm solution of a degenerate system, which is not
-    unique: an SVD selects one, and what LAPACK does when singular values tie is unspecified.
+    These coefficients are the minimum-norm solution of a system that is singular at working
+    precision, and that solution is not unique: an SVD selects one, and what LAPACK does when
+    singular values tie is unspecified.
     Two builds agreeing would show that they agree, not that the digits are portable, so
     pinning them would pin an accident of one machine.
 
