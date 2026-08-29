@@ -14,7 +14,7 @@ for the same curves. Measured across all fourteen catalogue curves, the largest 
 difference is 3.1e-12 — a measurement, and the only number here that no test holds. The two
 that are held sit above it: 1e-10, some thirty times higher, so that a slow drift fails a test
 long before it approaches the promise, and 1e-9, some three hundred times higher, which is the
-promise. Plotting and export are not implemented yet.
+promise. Series can also be plotted against their fit. Export is not implemented yet.
 
 ## Requirements
 
@@ -175,6 +175,34 @@ arrives as one line on stderr and exit code 1, never as a traceback.
 Units are printed as the catalogue spells them, so output can contain characters such as `³`.
 On a Windows console still running a legacy code page, set `PYTHONIOENCODING=utf-8`; without it
 hydrofit says so and stops rather than writing half a report.
+
+### Plot
+
+```bash
+hydrofit plot stad-10-52-851-010 -o stad-10.png
+```
+
+```
+stad-10.png
+```
+
+The figure carries the stored points as a scatter and the fitted polynomial as a line through
+them, each axis labelled the way the catalogue spells it, unit in square brackets. There is no
+legend: with a single curve there is nothing to tell apart. `--degree` chooses the polynomial
+exactly as it does for `fit` and `eval`.
+
+The only thing printed is the path that was written, spelled as your platform spells it:
+separators normalised, and nothing else touched. It is not resolved against the filesystem, so
+`./sub/../out.png` comes back with the `..` still in it. The figure itself is the output.
+
+The curve is drawn across the range of the data and no further. Outside it a degree-6
+polynomial diverges — the property `eval` spells out in a warning — and a picture has no line
+to carry a warning on, so the drawing ends where the evidence ends.
+
+`-o` is required, and the extension chooses the format: `png`, `pdf` and `svg` among others.
+An unknown series, a degree the series is too short to carry, an extension matplotlib does not
+write, or a path that cannot be opened — each arrives as one line on stderr and exit code 1,
+like every other problem you can fix.
 
 ## Architecture
 

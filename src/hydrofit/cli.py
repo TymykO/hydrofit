@@ -19,6 +19,7 @@ from hydrofit.errors import HydrofitError
 from hydrofit.fitting import DEFAULT_DEGREE, PolynomialFit
 from hydrofit.importer import import_workbook
 from hydrofit.models import DataKind, Series
+from hydrofit.plotting import figure_for_fit
 from hydrofit.store import SeriesStore
 
 # Said in full because the alternative reads as a bug: `--product DN10` will one day also return
@@ -280,6 +281,45 @@ def _run_fit(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+def _run_plot(args: argparse.Namespace, out: TextIO) -> int:
+    """Write a figure of one series and the polynomial fitted to it.
+
+    Args:
+        args: Parsed arguments.
+        out: Stream to print to.
+
+    Returns:
+        Process exit code.
+
+    Raises:
+        HydrofitError: If the slug is unknown, the series cannot carry the degree, or the
+            output path cannot be written.
+    """
+    series: Series = SeriesStore(Path(args.store)).load(args.slug)
+    fit = PolynomialFit.fit(series, args.degree)
+    figure = figure_for_fit(series, fit)
+    destination = Path(args.output)
+    try:
+        figure.savefig(destination)
+    except (OSError, ValueError) as error:
+        # Two families. OSError is the filesystem saying no — a directory that does not exist,
+        # a name it refuses, a file already open. ValueError is matplotlib refusing the
+        # *format*, which it takes from the extension and rejects before touching the disk:
+        # `-o out.dat` raised `Format 'dat' is not supported` straight through main and into
+        # the user's face (measured 2026-08-29). Both are things the user can fix by retyping
+        # the argument, so both are one line rather than a traceback out of a library never
+        # called by name.
+        #
+        # The guard spans the whole call, drawing included, which is wider than those two
+        # causes. A ValueError raised while rendering would be reported as "cannot write",
+        # naming the file when the file is innocent. Accepted rather than narrowed: `Series`
+        # already refuses non-finite values, so there is no known way to reach it, and
+        # catching by inspecting the message text would be worse than the imprecision.
+        raise HydrofitError(f"cannot write {destination}: {error}") from error
+    _emit([str(destination)], out)
+    return 0
+
+
 def _run_eval(args: argparse.Namespace, out: TextIO) -> int:
     """Evaluate the fitted polynomial at one x.
 
@@ -407,6 +447,19 @@ def _parser() -> argparse.ArgumentParser:
         help="where to evaluate; an answer from outside the data is marked in the line",
     )
 
+    plotting = with_degree(
+        with_store(subcommands.add_parser("plot", help="draw one series and its fit"))
+    )
+    plotting.add_argument("slug", help="identifier from the list output")
+    plotting.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="PATH",
+        help="file to write; the format comes from the extension, and the curve is drawn "
+        "only across the range of the data",
+    )
+
     return parser
 
 
@@ -425,6 +478,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "show": _run_show,
         "fit": _run_fit,
         "eval": _run_eval,
+        "plot": _run_plot,
     }
     try:
         # Parsing is inside the guard because `--help` prints from within it. The import help

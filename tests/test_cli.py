@@ -615,3 +615,185 @@ def test_the_warning_names_the_degree_it_was_asked_for(
     store = parabola_store(tmp_path / "store")
     main(["eval", "test-10-000", "--x", "40", "--degree", "3", "--store", str(store)])
     assert "degree-3 polynomial" in capsys.readouterr().err
+
+
+def test_plot_writes_the_png_it_was_asked_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file named by `-o` exists afterwards, carries PNG bytes, and is what gets printed.
+
+    The magic number is checked rather than the size alone: an empty file and a file holding
+    an error page both have a size, and neither is a figure.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 0
+
+    assert target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert capsys.readouterr().out.strip() == str(target)
+
+
+def test_plot_on_an_unknown_series_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A slug nobody stored is a problem the user can fix, so it never becomes a traceback.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+
+    assert main(["plot", "nothing-here", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert not target.exists()
+
+
+def test_plot_into_a_missing_directory_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A directory that does not exist reaches the user as a sentence, not as an OSError.
+
+    Named for what it covers: "unwritable path" would promise permissions and locked files
+    as well, and this test knows only about ENOENT. The other two causes have no test at all.
+
+    matplotlib is several layers below the command the user typed, so its exception names
+    things the user never called; the message has to be ours.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "no-such-directory" / "out.png"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "cannot write" in captured.err
+
+
+def test_plot_honours_the_degree_it_is_given(tmp_path: Path) -> None:
+    """`--degree` reaches the fit, so two degrees produce two different figures.
+
+    The README says the flag works here exactly as it does for `fit` and `eval`; before this
+    test nothing checked that it was passed on at all, and a `plot` that silently ignored it
+    would have looked correct in every other assertion.
+
+    Args:
+        tmp_path: Working directory for this test.
+    """
+    store = parabola_store(tmp_path / "store")
+    first = tmp_path / "d1.png"
+    second = tmp_path / "d2.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "1",
+                "-o",
+                str(first),
+                "--store",
+                str(store),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "2",
+                "-o",
+                str(second),
+                "--store",
+                str(store),
+            ]
+        )
+        == 0
+    )
+
+    # A parabola fitted straight is not the parabola fitted as a parabola, so the two drawings
+    # differ in content. Comparing the bytes is safe here in a way a golden file is not: both
+    # sides were produced by this run, on this machine, seconds apart.
+    assert first.read_bytes() != second.read_bytes()
+
+
+def test_plot_refuses_a_degree_the_series_cannot_carry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Too few points for the degree asked is one line and exit 1, as it is for `fit`.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store", points=4)
+    target = tmp_path / "out.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "8",
+                "-o",
+                str(target),
+                "--store",
+                str(store),
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "at least 9 points" in captured.err
+    assert not target.exists()
+
+
+def test_plot_refuses_a_format_matplotlib_does_not_know(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An extension matplotlib cannot write is a sentence, not a ValueError traceback.
+
+    Measured before this test existed: `-o out.dat` raised `Format 'dat' is not supported`
+    through `main` and printed a traceback naming `backend_bases.py`, a file the user never
+    called. The refusal happens before anything is opened, so it is not an OSError and the
+    first version of this command let it through.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.dat"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "cannot write" in captured.err
+    # The docstring says the refusal happens before anything is opened; without this the
+    # sentence is a claim nobody checks, and an implementation that wrote a few bytes first
+    # would pass.
+    assert not target.exists()
