@@ -314,6 +314,38 @@ def test_help_survives_a_console_that_cannot_render_it(
     assert "set PYTHONIOENCODING=utf-8" in capsys.readouterr().err
 
 
+def bumpy_store(root: Path, points: int = 24) -> Path:
+    """Write a store holding one series no low-degree polynomial reproduces.
+
+    A parabola is fitted identically by degree 2 and degree 4 — measured at 1.3e-13 apart —
+    so a figure comparing those two degrees of it shows one curve drawn twice. Any test that
+    means to see the second degree used needs data that disagrees.
+
+    Args:
+        root: Directory to build the store in.
+        points: How many points the series gets.
+
+    Returns:
+        The store directory.
+    """
+    import math
+
+    x = tuple(1.0 + index * 0.125 for index in range(points))
+    SeriesStore(root).save(
+        Series(
+            product="BUMPY 10",
+            article_no="555",
+            x_axis=AxisSpec("Kv", "m³/h"),
+            y_axis=AxisSpec("n", "-"),
+            x=x,
+            y=tuple(math.sin(3.0 * value) + 0.5 * value for value in x),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
 def parabola_store(root: Path, points: int = 20) -> Path:
     """Write a store holding one series that lies exactly on y = x^2.
 
@@ -797,3 +829,233 @@ def test_plot_refuses_a_format_matplotlib_does_not_know(
     # sentence is a claim nobody checks, and an implementation that wrote a few bytes first
     # would pass.
     assert not target.exists()
+
+
+def vessel_store(root: Path) -> Path:
+    """Add a series on different axes to an existing store.
+
+    A pressurisation vessel carries different quantities from a balancing valve, which is the
+    case the overlay has to refuse rather than draw.
+
+    Args:
+        root: Directory of the store to extend.
+
+    Returns:
+        The store directory.
+    """
+    x = tuple(1.0 + index * 0.5 for index in range(20))
+    SeriesStore(root).save(
+        Series(
+            product="VESSEL 80",
+            article_no="111",
+            x_axis=AxisSpec("q", "m³/h"),
+            y_axis=AxisSpec("Δp", "kPa"),
+            x=x,
+            y=tuple(value * 3.0 for value in x),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
+def test_plot_compare_degree_writes_a_figure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The *value* of the flag reaches the drawing, not merely the fact that it was given.
+
+    Three figures, and the third is what makes this worth asserting. A run that read the flag
+    and ignored its number would still differ from the plain figure, because a legend alone
+    changes the bytes — so degree 4 is compared against degree 5, which can differ only if the
+    number itself was used.
+
+    Comparing bytes is sound here in a way a stored image is not: every side is produced by
+    this run on this machine, and identical figures were measured to give identical bytes.
+    What this repository forbids is a golden file compared against a later run.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = bumpy_store(tmp_path / "store")
+    plain = tmp_path / "plain.png"
+    fourth = tmp_path / "fourth.png"
+    fifth = tmp_path / "fifth.png"
+    twin = tmp_path / "twin.png"
+
+    args = ["plot", "bumpy-10-555", "--degree", "2", "--store", str(store)]
+    assert main([*args, "-o", str(plain)]) == 0
+    assert main([*args, "--compare-degree", "4", "-o", str(fourth)]) == 0
+    assert main([*args, "--compare-degree", "5", "-o", str(fifth)]) == 0
+    assert main([*args, "--compare-degree", "4", "-o", str(twin)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        str(plain),
+        str(fourth),
+        str(fifth),
+        str(twin),
+    ]
+
+    assert fourth.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert fourth.read_bytes() != plain.read_bytes()
+    assert fourth.read_bytes() != fifth.read_bytes()
+    # The premise those two inequalities rest on, asserted rather than assumed: the same
+    # request twice writes the same bytes. Without this they would stay green for ever if
+    # matplotlib ever began stamping its output, and an inequality that cannot fail is not a
+    # test. `splitlines` rather than `split`, because a temporary directory may hold a space.
+    assert fourth.read_bytes() == twin.read_bytes()
+
+
+def test_plot_overlay_writes_a_figure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The overlaid slug reaches the drawing: overlaying one series differs from another.
+
+    The plain figure alone would not settle it — a run that read the flag and drew the first
+    series twice would differ from plain by its legend. A second overlay is what pins the
+    value rather than the presence of the flag.
+
+    Comparing bytes is sound here in a way a golden file is not: every side is produced by
+    this run, on this machine, and identical figures were measured to give identical bytes.
+    What this repository forbids is a *stored* image compared against a later one.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    for product, article, slope in (("TEST 20", "222", 1.5), ("TEST 30", "333", 2.5)):
+        SeriesStore(store).save(
+            Series(
+                product=product,
+                article_no=article,
+                x_axis=AxisSpec("Kv", "m³/h"),
+                y_axis=AxisSpec("n", "-"),
+                x=tuple(1.0 + index * 0.5 for index in range(20)),
+                y=tuple((1.0 + index * 0.5) * slope for index in range(20)),
+                kind=DataKind.RAW,
+                source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+            )
+        )
+    plain = tmp_path / "plain.png"
+    with_twenty = tmp_path / "twenty.png"
+    with_thirty = tmp_path / "thirty.png"
+
+    args = ["plot", "test-10-000", "--degree", "2", "--store", str(store)]
+    assert main([*args, "-o", str(plain)]) == 0
+    assert main([*args, "--overlay", "test-20-222", "-o", str(with_twenty)]) == 0
+    assert main([*args, "--overlay", "test-30-333", "-o", str(with_thirty)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        str(plain),
+        str(with_twenty),
+        str(with_thirty),
+    ]
+
+    assert with_twenty.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert with_twenty.read_bytes() != plain.read_bytes()
+    assert with_twenty.read_bytes() != with_thirty.read_bytes()
+
+
+def test_plot_overlay_across_different_axes_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two units on one axis is refused, and the message names both.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = vessel_store(parabola_store(tmp_path / "store"))
+    target = tmp_path / "out.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "2",
+                "--overlay",
+                "vessel-80-111",
+                "-o",
+                str(target),
+                "--store",
+                str(store),
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "Kv [m³/h]" in captured.err
+    assert "q [m³/h]" in captured.err
+    assert not target.exists()
+
+
+def test_plot_refuses_both_comparison_flags_at_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two flags answer different questions, so asking both is refused before drawing.
+
+    argparse itself enforces the exclusion, which means exit code 2 rather than 1 — the code
+    it uses for a command line it could not parse, as opposed to one it parsed and could not
+    carry out.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    target = tmp_path / "out.png"
+
+    with pytest.raises(SystemExit) as exit_code:
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--compare-degree",
+                "4",
+                "--overlay",
+                "test-10-000",
+                "-o",
+                str(target),
+            ]
+        )
+
+    # Exit 2 already proves nothing was drawn: argparse leaves before any code in this package
+    # runs, so `not target.exists()` could never be red here while this line is green. No store
+    # is built for the same reason — the refusal happens before one would be read.
+    assert exit_code.value.code == 2
+    # Both names, not one: the usage line of this subcommand mentions every flag it accepts, so
+    # a single name would also be present after an unknown-argument failure and the assertion
+    # would hold for a parser that never registered the exclusion at all. On names rather than
+    # on argparse's wording, because its messages go through gettext and a translation
+    # catalogue on the machine would redden this for a reason that is not the code.
+    message = capsys.readouterr().err
+    assert "--overlay" in message
+    assert "--compare-degree" in message
+
+
+def test_plot_refuses_a_series_compared_with_itself(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One request twice is not a comparison, and it is refused rather than drawn.
+
+    Reachable from the command line in two ways, both covered here: the same degree given to
+    `--compare-degree`, and the plotted slug given to `--overlay`.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+    base = ["plot", "test-10-000", "--degree", "2", "--store", str(store)]
+
+    for flag, value in (("--compare-degree", "2"), ("--overlay", "test-10-000")):
+        assert main([*base, flag, value, "-o", str(target)]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert len(captured.err.strip().splitlines()) == 1
+        assert "one request twice" in captured.err
+        assert not target.exists()
