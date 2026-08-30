@@ -172,6 +172,17 @@ is not an error: the exit code is 0.
 A problem you can fix — an absent file, an unknown series, a sheet that breaks the convention —
 arrives as one line on stderr and exit code 1, never as a traceback.
 
+Two exit codes, and they do not mean the same thing:
+
+| Code | What it says | Examples |
+|---|---|---|
+| `2` | the command line could not be parsed | an unknown flag, a missing required value, two mutually exclusive flags together such as `--compare-degree` with `--overlay` |
+| `1` | the command line was understood and the work could not be done | an unknown series, a degree the series is too short to carry, two series that do not share their axes, a file that cannot be written |
+
+The `2` cases never reach hydrofit's own code — argparse rejects them and prints its usage
+line, which is why the message reads differently from every other error here. A script that
+treats the two as one failure will retry a typo the same way it retries a missing file.
+
 Units are printed as the catalogue spells them, so output can contain characters such as `³`.
 On a Windows console still running a legacy code page, set `PYTHONIOENCODING=utf-8`; without it
 hydrofit says so and stops rather than writing half a report.
@@ -203,6 +214,29 @@ to carry a warning on, so the drawing ends where the evidence ends.
 An unknown series, a degree the series is too short to carry, an extension matplotlib does not
 write, or a path that cannot be opened — each arrives as one line on stderr and exit code 1,
 like every other problem you can fix.
+
+Two curves fit on one figure, and a legend then names each one with the quality of its fit:
+
+```bash
+hydrofit plot stad-10-52-851-010 --compare-degree 4 -o degrees.png
+hydrofit plot stad-10-52-851-010 --overlay stad-15-52-851-015 -o sizes.png
+```
+
+`--compare-degree M` draws a second curve of that degree over the same points, which turns the
+choice of degree from an argument into something you can look at. `--overlay SLUG` draws a
+second series with its own fit. The two answer different questions and cannot be combined.
+
+Each legend entry carries the series, the degree, and how closely that fit follows its points.
+R² is left out whenever it is not a finite number — which is what a flat series produces, since
+there is no variation for it to account for. `R2=nan` in a legend would read as a measurement
+that came back strange rather than as one that was never possible.
+
+Comparing a series with itself at the same degree is refused: two identical curves and two
+identical legend entries read as a comparison and are not one.
+
+`--overlay` is refused when the two series do not measure the same quantities — the message
+names both axis labels, and nothing is written. Two units on one axis is a figure that lies,
+and a picture outlives the session that made it.
 
 ## Architecture
 
