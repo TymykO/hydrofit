@@ -19,7 +19,7 @@ from hydrofit.errors import HydrofitError
 from hydrofit.fitting import DEFAULT_DEGREE, PolynomialFit
 from hydrofit.importer import import_workbook
 from hydrofit.models import DataKind, Series
-from hydrofit.plotting import figure_for_fit
+from hydrofit.plotting import figure_comparing, figure_for_fit
 from hydrofit.store import SeriesStore
 
 # Said in full because the alternative reads as a bug: `--product DN10` will one day also return
@@ -292,12 +292,26 @@ def _run_plot(args: argparse.Namespace, out: TextIO) -> int:
         Process exit code.
 
     Raises:
-        HydrofitError: If the slug is unknown, the series cannot carry the degree, or the
+        HydrofitError: If a slug is unknown, a series cannot carry the degree, the two series
+            do not share their axes, one series at one degree was asked for twice, or the
             output path cannot be written.
     """
-    series: Series = SeriesStore(Path(args.store)).load(args.slug)
+    store = SeriesStore(Path(args.store))
+    series: Series = store.load(args.slug)
     fit = PolynomialFit.fit(series, args.degree)
-    figure = figure_for_fit(series, fit)
+
+    if args.compare_degree is not None:
+        figure = figure_comparing(
+            [(series, fit), (series, PolynomialFit.fit(series, args.compare_degree))]
+        )
+    elif args.overlay is not None:
+        other: Series = store.load(args.overlay)
+        figure = figure_comparing(
+            [(series, fit), (other, PolynomialFit.fit(other, args.degree))]
+        )
+    else:
+        figure = figure_for_fit(series, fit)
+
     destination = Path(args.output)
     try:
         figure.savefig(destination)
@@ -458,6 +472,24 @@ def _parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="file to write; the format comes from the extension, and the curve is drawn "
         "only across the range of the data",
+    )
+    # Mutually exclusive because the two answer different questions — which degree suits this
+    # series, and how two series compare — and a figure that tried to answer both would carry
+    # three curves under a flag named for two. argparse refuses the combination itself, with
+    # its own message and exit code 2, which is the same refusal a hand-written check would
+    # give and one fewer place for the rule to live.
+    comparison = plotting.add_mutually_exclusive_group()
+    comparison.add_argument(
+        "--compare-degree",
+        type=int,
+        metavar="M",
+        help="draw a second curve of this degree over the same series",
+    )
+    comparison.add_argument(
+        "--overlay",
+        metavar="SLUG",
+        help="draw a second series and its fit on the same axes; refused when the two "
+        "series do not measure the same quantities",
     )
 
     return parser
