@@ -317,9 +317,10 @@ def test_help_survives_a_console_that_cannot_render_it(
 def bumpy_store(root: Path, points: int = 24) -> Path:
     """Write a store holding one series no low-degree polynomial reproduces.
 
-    A parabola is fitted identically by degree 2 and degree 4 — measured at 1.3e-13 apart —
-    so a figure comparing those two degrees of it shows one curve drawn twice. Any test that
-    means to see the second degree used needs data that disagrees.
+    The parabola of `parabola_store` is fitted identically by degree 2 and degree 4 — the two
+    measured 1.28e-13 apart at its default twenty points — so a figure comparing those two
+    degrees of it shows one curve drawn twice. Any test that means to see the second degree
+    used needs data that disagrees.
 
     Args:
         root: Directory to build the store in.
@@ -864,10 +865,11 @@ def test_plot_compare_degree_writes_a_figure(
 ) -> None:
     """The *value* of the flag reaches the drawing, not merely the fact that it was given.
 
-    Three figures, and the third is what makes this worth asserting. A run that read the flag
-    and ignored its number would still differ from the plain figure, because a legend alone
-    changes the bytes — so degree 4 is compared against degree 5, which can differ only if the
-    number itself was used.
+    Four figures: plain, degree 4, degree 5, and degree 4 again. The third is what makes this
+    worth asserting. A run that read the flag and ignored its number would still differ from
+    the plain figure, because a legend alone changes the bytes — so degree 4 is compared
+    against degree 5, which can differ only if the number itself was used. The fourth repeats
+    the second request, so that the inequalities stand on a measured premise.
 
     Comparing bytes is sound here in a way a stored image is not: every side is produced by
     this run on this machine, and identical figures were measured to give identical bytes.
@@ -888,6 +890,7 @@ def test_plot_compare_degree_writes_a_figure(
     assert main([*args, "--compare-degree", "4", "-o", str(fourth)]) == 0
     assert main([*args, "--compare-degree", "5", "-o", str(fifth)]) == 0
     assert main([*args, "--compare-degree", "4", "-o", str(twin)]) == 0
+    # `splitlines` rather than `split`, because a temporary directory may hold a space.
     assert capsys.readouterr().out.splitlines() == [
         str(plain),
         str(fourth),
@@ -901,7 +904,7 @@ def test_plot_compare_degree_writes_a_figure(
     # The premise those two inequalities rest on, asserted rather than assumed: the same
     # request twice writes the same bytes. Without this they would stay green for ever if
     # matplotlib ever began stamping its output, and an inequality that cannot fail is not a
-    # test. `splitlines` rather than `split`, because a temporary directory may hold a space.
+    # test.
     assert fourth.read_bytes() == twin.read_bytes()
 
 
@@ -912,7 +915,8 @@ def test_plot_overlay_writes_a_figure(
 
     The plain figure alone would not settle it — a run that read the flag and drew the first
     series twice would differ from plain by its legend. A second overlay is what pins the
-    value rather than the presence of the flag.
+    value rather than the presence of the flag, and the first overlay asked for again holds the
+    premise both inequalities rest on: identical requests write identical bytes.
 
     Comparing bytes is sound here in a way a golden file is not: every side is produced by
     this run, on this machine, and identical figures were measured to give identical bytes.
@@ -939,20 +943,27 @@ def test_plot_overlay_writes_a_figure(
     plain = tmp_path / "plain.png"
     with_twenty = tmp_path / "twenty.png"
     with_thirty = tmp_path / "thirty.png"
+    twin = tmp_path / "twin.png"
 
     args = ["plot", "test-10-000", "--degree", "2", "--store", str(store)]
     assert main([*args, "-o", str(plain)]) == 0
     assert main([*args, "--overlay", "test-20-222", "-o", str(with_twenty)]) == 0
     assert main([*args, "--overlay", "test-30-333", "-o", str(with_thirty)]) == 0
+    assert main([*args, "--overlay", "test-20-222", "-o", str(twin)]) == 0
     assert capsys.readouterr().out.splitlines() == [
         str(plain),
         str(with_twenty),
         str(with_thirty),
+        str(twin),
     ]
 
     assert with_twenty.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     assert with_twenty.read_bytes() != plain.read_bytes()
     assert with_twenty.read_bytes() != with_thirty.read_bytes()
+    # The premise both inequalities rest on, held in this test rather than borrowed from
+    # another: the same request twice writes the same bytes. Without it they stay green
+    # whenever matplotlib stamps its output with anything that differs between runs.
+    assert with_twenty.read_bytes() == twin.read_bytes()
 
 
 def test_plot_overlay_across_different_axes_is_one_line_and_exit_1(
@@ -1026,9 +1037,9 @@ def test_plot_refuses_both_comparison_flags_at_once(
     # runs, so `not target.exists()` could never be red here while this line is green. No store
     # is built for the same reason — the refusal happens before one would be read.
     assert exit_code.value.code == 2
-    # Both names, not one: the usage line of this subcommand mentions every flag it accepts, so
-    # a single name would also be present after an unknown-argument failure and the assertion
-    # would hold for a parser that never registered the exclusion at all. On names rather than
+    # Both names, not one: were `--overlay` not registered at all, argparse would still exit 2,
+    # refusing it as an unrecognised argument in a message that names `--overlay` alone. The
+    # second name is what ties this exit to the exclusion. On names rather than
     # on argparse's wording, because its messages go through gettext and a translation
     # catalogue on the machine would redden this for a reason that is not the code.
     message = capsys.readouterr().err

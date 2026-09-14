@@ -7,10 +7,11 @@ backend is pinned: the tests pass identically whether the machine resolves one i
 headless, and `savefig` picks its writer from the file format rather than from the display.
 
 Nothing in this module writes a file. Building the figure and saving it are separate so that a
-test can assert on what was drawn rather than against a *stored* image — bytes this project has
-already watched change under a runner with a different processor while the code stood still. Two
-images produced by one run on one machine may still be compared with each other, and are: that
-comparison says the drawings differ, which is a claim about this run and not about the future.
+test can assert on what was drawn rather than against a *stored* image. Computed output is not
+byte-stable across machines: the same commit and the same numpy gave different last digits of
+a least-squares fit on two CI runners with different processors. Two images produced by one
+run on one machine may still be compared with each other, and are: that comparison says the
+drawings differ, which is a claim about this run and not about the future.
 """
 
 import math
@@ -154,14 +155,15 @@ def _refuse_undrawable(pairs: Sequence[tuple[Series, PolynomialFit]]) -> None:
     request twice**, because one series at one degree asked for twice produces two identical
     legend entries and a curve hidden exactly beneath itself.
 
-    That last refusal is about the request and not about the drawing, and the difference is
-    worth stating: two *different* requests can still produce curves that coincide, and a
-    parabola fitted at degree 2 and at degree 4 does exactly that, to within 1e-13. Such a
-    figure is permitted, because the coincidence is the answer — degree 4 buys nothing here —
-    and refusing it would hide the very finding the comparison was asked for.
+    That last refusal is decided on the request — the same series at the same degree — and
+    not on whether the two curves coincide. Two *different* requests can still produce curves
+    that coincide: on data lying exactly on a parabola, a degree-2 and a degree-4 fit differ
+    only in the last bits of the least-squares solution. Such a figure is permitted, because
+    the coincidence is the answer — degree 4 buys nothing here — and refusing it would hide
+    the very finding the comparison was asked for.
 
-    The refusals live here rather than at the command because it is the drawing that would
-    mislead, not the request.
+    The refusals live here rather than at the command because every comparison figure passes
+    through this function, and no caller can reach a comparison figure without passing them.
 
     Args:
         pairs: The series and fits about to be drawn together.

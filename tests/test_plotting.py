@@ -497,9 +497,9 @@ def wider_series() -> Series:
 def bumpy_series() -> Series:
     """A shape no low-degree polynomial reproduces, so two degrees genuinely disagree.
 
-    A series lying exactly on a parabola is fitted identically by degree 2 and degree 4 — to
-    within 1e-13 — so it cannot tell a figure that used the second degree from one that
-    ignored it. This one can.
+    A series lying exactly on a parabola is fitted identically by degree 2 and degree 4 — on
+    `series_on_curve` the two lie 8.9e-15 apart — so it cannot tell a figure that used the
+    second degree from one that ignored it. This one can.
     """
     x = np.linspace(1.0, 4.0, 24)
     y = np.sin(3.0 * x) + 0.5 * x
