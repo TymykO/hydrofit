@@ -319,10 +319,9 @@ def _run_plot(args: argparse.Namespace, out: TextIO) -> int:
         # Two families. OSError is the filesystem saying no — a directory that does not exist,
         # a name it refuses, a file already open. ValueError is matplotlib refusing the
         # *format*, which it takes from the extension and rejects before touching the disk:
-        # `-o out.dat` raised `Format 'dat' is not supported` straight through main and into
-        # the user's face (measured 2026-08-29). Both are things the user can fix by retyping
-        # the argument, so both are one line rather than a traceback out of a library never
-        # called by name.
+        # `-o out.dat` raises `Format 'dat' is not supported`, which uncaught would reach the
+        # user as a traceback. Both are things the user can fix by retyping the argument, so
+        # both are one line rather than a traceback out of a library never called by name.
         #
         # The guard spans the whole call, drawing included, which is wider than those two
         # causes. A ValueError raised while rendering would be reported as "cannot write",
