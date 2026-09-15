@@ -203,8 +203,10 @@ legend: with a single curve there is nothing to tell apart. `--degree` chooses t
 exactly as it does for `fit` and `eval`.
 
 The only thing printed is the path that was written, spelled as your platform spells it:
-separators normalised, and nothing else touched. It is not resolved against the filesystem, so
-`./sub/../out.png` comes back with the `..` still in it. The figure itself is the output.
+separators normalised, repeated separators collapsed, and every `.` segment dropped — a
+leading `./` among them. It is not resolved against the filesystem, so `..` stays:
+`./sub/.//../out.png` comes back as `sub/../out.png` — `sub\..\out.png` on Windows — naming
+the same file. The figure itself is the output.
 
 The curve is drawn across the range of the data and no further. Outside it a degree-6
 polynomial diverges — the property `eval` spells out in a warning — and a picture has no line
