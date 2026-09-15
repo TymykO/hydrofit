@@ -906,8 +906,8 @@ def test_plot_compare_degree_writes_a_figure(
     the second request, so that the inequalities stand on a measured premise.
 
     Comparing bytes is sound here in a way a stored image is not: every side is produced by
-    this run on this machine, and identical figures were measured to give identical bytes.
-    What this repository forbids is a golden file compared against a later run.
+    this run on this machine, and identical requests give identical bytes. What this
+    repository forbids is a golden file compared against a later run.
 
     Args:
         tmp_path: Working directory for this test.
@@ -953,8 +953,8 @@ def test_plot_overlay_writes_a_figure(
     premise both inequalities rest on: identical requests write identical bytes.
 
     Comparing bytes is sound here in a way a golden file is not: every side is produced by
-    this run, on this machine, and identical figures were measured to give identical bytes.
-    What this repository forbids is a *stored* image compared against a later one.
+    this run, on this machine, and identical requests give identical bytes. What this
+    repository forbids is a *stored* image compared against a later one.
 
     Args:
         tmp_path: Working directory for this test.

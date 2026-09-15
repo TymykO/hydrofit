@@ -2,9 +2,9 @@
 
 Figures are built as bare `Figure` objects, never through `pyplot`. That is what keeps this
 module free of global state: `pyplot` is what holds the registry of open windows and what
-selects an interactive backend, and nothing here imports it — measured, not assumed. So no
-backend is pinned: the tests pass identically whether the machine resolves one interactive or
-headless, and `savefig` picks its writer from the file format rather than from the display.
+selects an interactive backend, and nothing here imports it. So no backend is pinned: the
+tests pass identically whether the machine resolves one interactive or headless, and `savefig`
+picks its writer from the file format rather than from the display.
 
 Nothing in this module writes a file. Building the figure and saving it are separate so that a
 test can assert on what was drawn rather than against a *stored* image. Computed output is not
