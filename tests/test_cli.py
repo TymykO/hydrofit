@@ -6,6 +6,7 @@ as one line and exit code 1 — never as a traceback, which is a bug report aime
 person.
 """
 
+import os
 import warnings
 from pathlib import Path
 
@@ -314,6 +315,39 @@ def test_help_survives_a_console_that_cannot_render_it(
     assert "set PYTHONIOENCODING=utf-8" in capsys.readouterr().err
 
 
+def bumpy_store(root: Path, points: int = 24) -> Path:
+    """Write a store holding one series no low-degree polynomial reproduces.
+
+    The parabola of `parabola_store` is fitted identically by degree 2 and degree 4 — the two
+    measured 1.28e-13 apart at its default twenty points — so a figure comparing those two
+    degrees of it shows one curve drawn twice. Any test that means to see the second degree
+    used needs data that disagrees.
+
+    Args:
+        root: Directory to build the store in.
+        points: How many points the series gets.
+
+    Returns:
+        The store directory.
+    """
+    import math
+
+    x = tuple(1.0 + index * 0.125 for index in range(points))
+    SeriesStore(root).save(
+        Series(
+            product="BUMPY 10",
+            article_no="555",
+            x_axis=AxisSpec("Kv", "m³/h"),
+            y_axis=AxisSpec("n", "-"),
+            x=x,
+            y=tuple(math.sin(3.0 * value) + 0.5 * value for value in x),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
 def parabola_store(root: Path, points: int = 20) -> Path:
     """Write a store holding one series that lies exactly on y = x^2.
 
@@ -615,3 +649,458 @@ def test_the_warning_names_the_degree_it_was_asked_for(
     store = parabola_store(tmp_path / "store")
     main(["eval", "test-10-000", "--x", "40", "--degree", "3", "--store", str(store)])
     assert "degree-3 polynomial" in capsys.readouterr().err
+
+
+def test_plot_writes_the_png_it_was_asked_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file named by `-o` exists afterwards, carries PNG bytes, and is what gets printed.
+
+    The magic number is checked rather than the size alone: an empty file and a file holding
+    an error page both have a size, and neither is a figure.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 0
+
+    assert target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert capsys.readouterr().out.strip() == str(target)
+
+
+def test_plot_prints_the_path_as_spelled_not_as_resolved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path with `.`, `..` and a doubled separator is printed spelled, not resolved.
+
+    Every `.` segment and the doubled separator go, the `..` stays, and the printed path still
+    names the file that was written. One argument carries all four, so a command that only
+    stripped a leading `./` would print `sub/.//../out.png` and fail here. The expected
+    line is built from its segments with `os.path.join` rather than by the `Path` call the
+    command makes itself, because comparing the output with `str(Path(...))` would compare the
+    code with its own reflection.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+        monkeypatch: Moves the working directory so the relative path lands in `tmp_path`.
+    """
+    store = parabola_store(tmp_path / "store")
+    (tmp_path / "sub").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert (
+        main(
+            ["plot", "test-10-000", "-o", "./sub/.//../out.png", "--store", str(store)]
+        )
+        == 0
+    )
+
+    printed = capsys.readouterr().out.strip()
+    assert printed == os.path.join("sub", "..", "out.png")
+    assert os.path.samefile(printed, tmp_path / "out.png")
+
+
+def test_plot_on_an_unknown_series_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A slug nobody stored is a problem the user can fix, so it never becomes a traceback.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+
+    assert main(["plot", "nothing-here", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert not target.exists()
+
+
+def test_plot_into_a_missing_directory_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A directory that does not exist reaches the user as a sentence, not as an OSError.
+
+    Named for what it covers: "unwritable path" would promise permissions and locked files
+    as well, and this test knows only about ENOENT. The other two causes have no test at all.
+
+    matplotlib is several layers below the command the user typed, so its exception names
+    things the user never called; the message has to be ours.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "no-such-directory" / "out.png"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "cannot write" in captured.err
+
+
+def test_plot_honours_the_degree_it_is_given(tmp_path: Path) -> None:
+    """`--degree` reaches the fit, so two degrees produce two different figures.
+
+    The README says the flag works here exactly as it does for `fit` and `eval`. A `plot` that
+    silently ignored it would satisfy every other assertion on the figure, so two degrees are
+    compared.
+
+    Args:
+        tmp_path: Working directory for this test.
+    """
+    store = parabola_store(tmp_path / "store")
+    first = tmp_path / "d1.png"
+    second = tmp_path / "d2.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "1",
+                "-o",
+                str(first),
+                "--store",
+                str(store),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "2",
+                "-o",
+                str(second),
+                "--store",
+                str(store),
+            ]
+        )
+        == 0
+    )
+
+    # A parabola fitted straight is not the parabola fitted as a parabola, so the two drawings
+    # differ in content. Comparing the bytes is safe here in a way a golden file is not: both
+    # sides were produced by this run, on this machine, seconds apart.
+    assert first.read_bytes() != second.read_bytes()
+
+
+def test_plot_refuses_a_degree_the_series_cannot_carry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Too few points for the degree asked is one line and exit 1, as it is for `fit`.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store", points=4)
+    target = tmp_path / "out.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "8",
+                "-o",
+                str(target),
+                "--store",
+                str(store),
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "at least 9 points" in captured.err
+    assert not target.exists()
+
+
+def test_plot_refuses_a_format_matplotlib_does_not_know(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An extension matplotlib cannot write is a sentence, not a ValueError traceback.
+
+    matplotlib refuses an unknown format before anything is opened, with `ValueError`
+    (`Format 'dat' is not supported`) rather than `OSError`. A handler that caught only
+    `OSError` would let it reach the user as a traceback naming `backend_bases.py`, a file
+    the user never called.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.dat"
+
+    assert main(["plot", "test-10-000", "-o", str(target), "--store", str(store)]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "cannot write" in captured.err
+    # The docstring says the refusal happens before anything is opened; without this the
+    # sentence is a claim nobody checks, and an implementation that wrote a few bytes first
+    # would pass.
+    assert not target.exists()
+
+
+def vessel_store(root: Path) -> Path:
+    """Add a series on different axes to an existing store.
+
+    A pressurisation vessel carries different quantities from a balancing valve, which is the
+    case the overlay has to refuse rather than draw.
+
+    Args:
+        root: Directory of the store to extend.
+
+    Returns:
+        The store directory.
+    """
+    x = tuple(1.0 + index * 0.5 for index in range(20))
+    SeriesStore(root).save(
+        Series(
+            product="VESSEL 80",
+            article_no="111",
+            x_axis=AxisSpec("q", "m³/h"),
+            y_axis=AxisSpec("Δp", "kPa"),
+            x=x,
+            y=tuple(value * 3.0 for value in x),
+            kind=DataKind.RAW,
+            source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+        )
+    )
+    return root
+
+
+def test_plot_compare_degree_writes_a_figure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The *value* of the flag reaches the drawing, not merely the fact that it was given.
+
+    Four figures: plain, degree 4, degree 5, and degree 4 again. The third is what makes this
+    worth asserting. A run that read the flag and ignored its number would still differ from
+    the plain figure, because a legend alone changes the bytes — so degree 4 is compared
+    against degree 5, which can differ only if the number itself was used. The fourth repeats
+    the second request, so that the inequalities stand on a measured premise.
+
+    Comparing bytes is sound here in a way a stored image is not: every side is produced by
+    this run on this machine, and identical requests give identical bytes. What this
+    repository forbids is a golden file compared against a later run.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = bumpy_store(tmp_path / "store")
+    plain = tmp_path / "plain.png"
+    fourth = tmp_path / "fourth.png"
+    fifth = tmp_path / "fifth.png"
+    twin = tmp_path / "twin.png"
+
+    args = ["plot", "bumpy-10-555", "--degree", "2", "--store", str(store)]
+    assert main([*args, "-o", str(plain)]) == 0
+    assert main([*args, "--compare-degree", "4", "-o", str(fourth)]) == 0
+    assert main([*args, "--compare-degree", "5", "-o", str(fifth)]) == 0
+    assert main([*args, "--compare-degree", "4", "-o", str(twin)]) == 0
+    # `splitlines` rather than `split`, because a temporary directory may hold a space.
+    assert capsys.readouterr().out.splitlines() == [
+        str(plain),
+        str(fourth),
+        str(fifth),
+        str(twin),
+    ]
+
+    assert fourth.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert fourth.read_bytes() != plain.read_bytes()
+    assert fourth.read_bytes() != fifth.read_bytes()
+    # The premise those two inequalities rest on, asserted rather than assumed: the same
+    # request twice writes the same bytes. Without this they would stay green for ever if
+    # matplotlib ever began stamping its output, and an inequality that cannot fail is not a
+    # test.
+    assert fourth.read_bytes() == twin.read_bytes()
+
+
+def test_plot_overlay_writes_a_figure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The overlaid slug reaches the drawing: overlaying one series differs from another.
+
+    The plain figure alone would not settle it — a run that read the flag and drew the first
+    series twice would differ from plain by its legend. A second overlay is what pins the
+    value rather than the presence of the flag, and the first overlay asked for again holds the
+    premise both inequalities rest on: identical requests write identical bytes.
+
+    Comparing bytes is sound here in a way a golden file is not: every side is produced by
+    this run, on this machine, and identical requests give identical bytes. What this
+    repository forbids is a *stored* image compared against a later one.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    for product, article, slope in (("TEST 20", "222", 1.5), ("TEST 30", "333", 2.5)):
+        SeriesStore(store).save(
+            Series(
+                product=product,
+                article_no=article,
+                x_axis=AxisSpec("Kv", "m³/h"),
+                y_axis=AxisSpec("n", "-"),
+                x=tuple(1.0 + index * 0.5 for index in range(20)),
+                y=tuple((1.0 + index * 0.5) * slope for index in range(20)),
+                kind=DataKind.RAW,
+                source=SourceRef("built in the test", "", "2026-01-01T00:00:00"),
+            )
+        )
+    plain = tmp_path / "plain.png"
+    with_twenty = tmp_path / "twenty.png"
+    with_thirty = tmp_path / "thirty.png"
+    twin = tmp_path / "twin.png"
+
+    args = ["plot", "test-10-000", "--degree", "2", "--store", str(store)]
+    assert main([*args, "-o", str(plain)]) == 0
+    assert main([*args, "--overlay", "test-20-222", "-o", str(with_twenty)]) == 0
+    assert main([*args, "--overlay", "test-30-333", "-o", str(with_thirty)]) == 0
+    assert main([*args, "--overlay", "test-20-222", "-o", str(twin)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        str(plain),
+        str(with_twenty),
+        str(with_thirty),
+        str(twin),
+    ]
+
+    assert with_twenty.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert with_twenty.read_bytes() != plain.read_bytes()
+    assert with_twenty.read_bytes() != with_thirty.read_bytes()
+    # The premise both inequalities rest on, held in this test rather than borrowed from
+    # another: the same request twice writes the same bytes. Without it they stay green
+    # whenever matplotlib stamps its output with anything that differs between runs.
+    assert with_twenty.read_bytes() == twin.read_bytes()
+
+
+def test_plot_overlay_across_different_axes_is_one_line_and_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two units on one axis is refused, and the message names both.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = vessel_store(parabola_store(tmp_path / "store"))
+    target = tmp_path / "out.png"
+
+    assert (
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--degree",
+                "2",
+                "--overlay",
+                "vessel-80-111",
+                "-o",
+                str(target),
+                "--store",
+                str(store),
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "Kv [m³/h]" in captured.err
+    assert "q [m³/h]" in captured.err
+    assert not target.exists()
+
+
+def test_plot_refuses_both_comparison_flags_at_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two flags answer different questions, so asking both is refused before drawing.
+
+    argparse itself enforces the exclusion, which means exit code 2 rather than 1 — the code
+    it uses for a command line it could not parse, as opposed to one it parsed and could not
+    carry out.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    target = tmp_path / "out.png"
+
+    with pytest.raises(SystemExit) as exit_code:
+        main(
+            [
+                "plot",
+                "test-10-000",
+                "--compare-degree",
+                "4",
+                "--overlay",
+                "test-10-000",
+                "-o",
+                str(target),
+            ]
+        )
+
+    # Exit 2 already proves nothing was drawn: argparse leaves before any code in this package
+    # runs, so `not target.exists()` could never be red here while this line is green. No store
+    # is built for the same reason — the refusal happens before one would be read.
+    assert exit_code.value.code == 2
+    # Both names, not one: were `--overlay` not registered at all, argparse would still exit 2,
+    # refusing it as an unrecognised argument in a message that names `--overlay` alone. The
+    # second name is what ties this exit to the exclusion. On names rather than
+    # on argparse's wording, because its messages go through gettext and a translation
+    # catalogue on the machine would redden this for a reason that is not the code.
+    message = capsys.readouterr().err
+    assert "--overlay" in message
+    assert "--compare-degree" in message
+
+
+def test_plot_refuses_a_series_compared_with_itself(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One request twice is not a comparison, and it is refused rather than drawn.
+
+    Reachable from the command line in two ways, both covered here: the same degree given to
+    `--compare-degree`, and the plotted slug given to `--overlay`.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+    """
+    store = parabola_store(tmp_path / "store")
+    target = tmp_path / "out.png"
+    base = ["plot", "test-10-000", "--degree", "2", "--store", str(store)]
+
+    for flag, value in (("--compare-degree", "2"), ("--overlay", "test-10-000")):
+        assert main([*base, flag, value, "-o", str(target)]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert len(captured.err.strip().splitlines()) == 1
+        assert "one request twice" in captured.err
+        assert not target.exists()

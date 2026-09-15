@@ -30,3 +30,10 @@ dist/
 
 # Written per step for the owner to read and run; never part of the history.
 commit-plan.ps1
+
+# Figures written by `hydrofit plot`, which the README example drops here. The entry comes
+# before the first one exists, for the reason /build/ carries: the IDE stages new files by
+# itself, so the first run of the documented example would arrive already in the index.
+# Anchored, and deliberately not a bare *.png — an unanchored rule would also swallow a fixture
+# under tests/, and a fixture that disappears without anyone being told is the worst kind.
+/*.png
