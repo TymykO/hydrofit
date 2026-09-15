@@ -6,6 +6,7 @@ as one line and exit code 1 — never as a traceback, which is a bug report aime
 person.
 """
 
+import os
 import warnings
 from pathlib import Path
 
@@ -671,6 +672,39 @@ def test_plot_writes_the_png_it_was_asked_for(
     assert capsys.readouterr().out.strip() == str(target)
 
 
+def test_plot_prints_the_path_as_spelled_not_as_resolved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path with `.`, `..` and a doubled separator is printed spelled, not resolved.
+
+    Every `.` segment and the doubled separator go, the `..` stays, and the printed path still
+    names the file that was written. One argument carries all four, so a command that only
+    stripped a leading `./` would print `sub/.//../out.png` and fail here. The expected
+    line is built from its segments with `os.path.join` rather than by the `Path` call the
+    command makes itself, because comparing the output with `str(Path(...))` would compare the
+    code with its own reflection.
+
+    Args:
+        tmp_path: Working directory for this test.
+        capsys: Captured streams.
+        monkeypatch: Moves the working directory so the relative path lands in `tmp_path`.
+    """
+    store = parabola_store(tmp_path / "store")
+    (tmp_path / "sub").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert (
+        main(
+            ["plot", "test-10-000", "-o", "./sub/.//../out.png", "--store", str(store)]
+        )
+        == 0
+    )
+
+    printed = capsys.readouterr().out.strip()
+    assert printed == os.path.join("sub", "..", "out.png")
+    assert os.path.samefile(printed, tmp_path / "out.png")
+
+
 def test_plot_on_an_unknown_series_is_one_line_and_exit_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -720,9 +754,9 @@ def test_plot_into_a_missing_directory_is_one_line_and_exit_1(
 def test_plot_honours_the_degree_it_is_given(tmp_path: Path) -> None:
     """`--degree` reaches the fit, so two degrees produce two different figures.
 
-    The README says the flag works here exactly as it does for `fit` and `eval`; before this
-    test nothing checked that it was passed on at all, and a `plot` that silently ignored it
-    would have looked correct in every other assertion.
+    The README says the flag works here exactly as it does for `fit` and `eval`. A `plot` that
+    silently ignored it would satisfy every other assertion on the figure, so two degrees are
+    compared.
 
     Args:
         tmp_path: Working directory for this test.
@@ -808,10 +842,10 @@ def test_plot_refuses_a_format_matplotlib_does_not_know(
 ) -> None:
     """An extension matplotlib cannot write is a sentence, not a ValueError traceback.
 
-    Measured before this test existed: `-o out.dat` raised `Format 'dat' is not supported`
-    through `main` and printed a traceback naming `backend_bases.py`, a file the user never
-    called. The refusal happens before anything is opened, so it is not an OSError and the
-    first version of this command let it through.
+    matplotlib refuses an unknown format before anything is opened, with `ValueError`
+    (`Format 'dat' is not supported`) rather than `OSError`. A handler that caught only
+    `OSError` would let it reach the user as a traceback naming `backend_bases.py`, a file
+    the user never called.
 
     Args:
         tmp_path: Working directory for this test.

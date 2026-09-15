@@ -1,21 +1,17 @@
 """Unit tests for the plotting layer.
 
-Assertions here reach for the *data* an artist carries rather than for the number of artists,
-with one deliberate exception: the absence of a legend is a claim about an artist that must not
-exist, and there is no data to read. Everything else compares values, because a figure test
-written the other way passes for any drawing at all — two lines exist whether they were built
-from two arrays or twice from one, and an axis has a label whether or not the label says what
-the axis measures. Each test below has been seen red on a broken value: a moved point, a
-widened or shortened domain, a label stripped of its unit, a curve drawn from the raw points
-instead of the fit.
+Assertions here reach for the *data* an artist carries — offsets, xy data, label text —
+because a figure test that only counts artists passes for any drawing at all: two lines exist
+whether they were built from two arrays or twice from one, and an axis has a label whether or
+not the label says what the axis measures. Where a property has no data to read, the assertion
+is on the artist's own attributes: the absence of a legend, how many scatters a series
+contributes, and the colour, dash and stacking that tell two curves apart.
 
-Reaching for the data is necessary and was not sufficient. Two tests here read real data and
-still could not fail: one compared the fit against itself by taking its abscissae from the
-artist it was checking, and one bounded `curve_domain` while leaving `figure_for_fit` free to
-ignore it: a curve drawn five units past the data passed, and so did a line drawn straight
-through the points. Each test therefore names, in its own docstring, which property it holds
-and which it leaves to another test or to the eye. That division is the point — a test file
-whose prose claims more than its assertions check is worse than one that claims less.
+Reading real data is necessary and not sufficient. A test that takes the abscissae it compares
+from the artist it is checking compares a function with itself, and a test on `curve_domain`
+alone leaves the figure free to draw past it. Each test therefore names, in its own docstring,
+which property it holds and which it leaves to another test or to the eye — a test file whose
+prose claims more than its assertions check is worse than one that claims less.
 """
 
 import numpy as np
@@ -103,8 +99,9 @@ def test_line_is_the_fit_over_the_curve_domain() -> None:
 def test_the_drawn_curve_stays_within_the_data_on_the_figure() -> None:
     """The figure's own line, not just `curve_domain`, ends where the data ends.
 
-    The distinction carries the weight: `curve_domain` was bounded and `figure_for_fit` was
-    not, so a line drawn five units past each end passed every test in this file.
+    The distinction carries the weight: a figure that computed its own domain instead of using
+    `curve_domain` would satisfy a test on `curve_domain` alone, so this one reads the line the
+    figure actually carries.
     """
     series = series_on_curve()
     low, high = series.x_range()
@@ -146,7 +143,7 @@ def test_the_fit_is_drawn_above_the_points() -> None:
 
 
 def test_the_figure_carries_no_legend() -> None:
-    """One curve has nothing to tell apart; the legend arrives with the comparison figures."""
+    """One curve has nothing to tell apart, so the single-fit figure carries no legend."""
     series = series_on_curve()
     axes = figure_for_fit(series, PolynomialFit.fit(series, degree=2)).axes[0]
 
@@ -547,8 +544,8 @@ def test_each_curve_is_its_own_fit_over_its_own_domain() -> None:
 def test_two_degrees_disagree_on_data_no_low_degree_reproduces() -> None:
     """On a shape a parabola cannot follow, degree 2 and degree 4 draw visibly apart.
 
-    The separation is asserted against the spread of the data rather than against zero: two
-    curves differing by 1e-13 satisfy `not allclose` and are one curve to any reader.
+    The separation is asserted against the spread of the data rather than against zero: at zero
+    tolerance two curves 1e-13 apart count as different, and they are one curve to any reader.
     """
     series = bumpy_series()
     axes = figure_comparing(

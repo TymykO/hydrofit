@@ -49,8 +49,8 @@ _COMPARISON_LINESTYLE = "--"
 
 # Wide enough to read where it crosses the scatter. Deliberately untested: an assertion on this
 # number would pin the constant to itself and could turn red only by editing the line that sets
-# it, which is a test that cannot fail for any reason worth catching. Width is a property for an
-# eye, and looking at the saved figure is already a closing criterion of this work.
+# it, which is a test that cannot fail for any reason worth catching. Width is a property judged
+# by eye on a saved figure, not by an assertion.
 _FIT_LINEWIDTH = 2.5
 
 # Explicit, because "drawn later" is not a guarantee: zorder decides what covers what, and it
@@ -89,8 +89,8 @@ def figure_for_fit(series: Series, fit: PolynomialFit) -> Figure:
     Returns:
         A figure carrying the points as a scatter and the fit as a red line above them, over
         the range of the data, with both axes labelled as the catalogue spells them, unit in
-        square brackets. No legend: with one curve there is nothing to tell apart, and the
-        legend that names each curve's metrics arrives with the comparison figures.
+        square brackets. No legend: with one curve there is nothing to tell apart. The figure
+        that names each curve's metrics in a legend is `figure_comparing`.
     """
     figure = Figure()
     axes = figure.subplots()
