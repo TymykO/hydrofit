@@ -544,8 +544,8 @@ def test_each_curve_is_its_own_fit_over_its_own_domain() -> None:
 def test_two_degrees_disagree_on_data_no_low_degree_reproduces() -> None:
     """On a shape a parabola cannot follow, degree 2 and degree 4 draw visibly apart.
 
-    The separation is asserted against the spread of the data rather than against zero: two
-    curves differing by 1e-13 satisfy `not allclose` and are one curve to any reader.
+    The separation is asserted against the spread of the data rather than against zero: at zero
+    tolerance two curves 1e-13 apart count as different, and they are one curve to any reader.
     """
     series = bumpy_series()
     axes = figure_comparing(
